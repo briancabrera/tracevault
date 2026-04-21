@@ -1,0 +1,90 @@
+{
+  "name": "tracevault",
+  "version": "0.1.0",
+  "description": "Lightweight audit event library for Node.js. Define your own events, persist them consistently in PostgreSQL.",
+  "keywords": [
+    "audit",
+    "audit-log",
+    "audit-logs",
+    "audit-trail",
+    "audit-events",
+    "tracevault",
+    "events",
+    "event-sourcing",
+    "postgres",
+    "postgresql",
+    "jsonb",
+    "observability",
+    "compliance",
+    "typescript",
+    "nodejs"
+  ],
+  "license": "MIT",
+  "author": "Brian Cabrera",
+  "homepage": "https://github.com/briancabrera/tracevault#readme",
+  "bugs": {
+    "url": "https://github.com/briancabrera/tracevault/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/briancabrera/tracevault.git"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "sql",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "node scripts/run-integration.mjs",
+    "test:all": "npm run test:unit && npm run test:integration",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run test:unit && npm run smoke"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.10.9",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.4",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
