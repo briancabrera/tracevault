@@ -48,6 +48,9 @@ normalization, and persistence.
 - **Recursive, cycle-safe masking** for sensitive fields (`password`, `token`, …).
 - **Sync** persistence (write-through) or **async** persistence (in-process queue).
 - **PostgreSQL** driver with `JSONB`-first, event-oriented schema.
+- **Multi-table audits via `scope()`** — one pool, many tables, one API.
+- **Narrow Read API** (`tracevault/query`) — equality filters, time windows,
+  deterministic pagination, per-table scopes. No DSL, no magic.
 - **Idempotent lifecycle** — `close()` is safe to call multiple times.
 - **Zero runtime dependencies** beyond `pg`.
 
@@ -385,17 +388,111 @@ Default indexes are created on `event`, `(actor_id, actor_type)`,
 
 ## Reading events
 
-Tracevault does **not** ship a read API. Once events are persisted, query them
-with whatever you already use — `pg`, `drizzle`, `knex`, `prisma`, or raw SQL:
+Tracevault ships a small, explicit **Read API** under the `tracevault/query`
+subpath. It's deliberately narrow: equality filters on the indexed columns,
+an `occurred_at` window, and deterministic pagination. Anything more exotic
+(JSONB probes, aggregations, joins, analytics) is your decision and belongs
+in raw SQL.
 
-```sql
-SELECT id, event, actor_id, data, occurred_at
-FROM audit_logs
-WHERE event = 'product.price.updated'
-  AND occurred_at >= now() - interval '7 days'
-ORDER BY occurred_at DESC
-LIMIT 100;
+```ts
+import { createTracevaultQuery } from "tracevault/query";
+
+const query = createTracevaultQuery({
+  driver: "postgres",
+  connectionString: process.env.DATABASE_URL ?? "",
+  tableName: "audit_logs",
+});
+
+const recent = await query.findMany({
+  event: "product.price.updated",
+  from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+  limit: 100,
+});
+
+const one = await query.findById("uuid-here"); // AuditRecord | null
+const total = await query.count({ actorType: "user", environment: "prod" });
+
+await query.close();
 ```
+
+### Filters
+
+`findMany(filters)` and `count(filters)` accept the same equality filter
+set; `findMany` additionally accepts pagination + ordering:
+
+| Field           | Type                              | Notes                                             |
+| --------------- | --------------------------------- | ------------------------------------------------- |
+| `event`         | `string`                          | Exact match.                                      |
+| `actorId`       | `string`                          | Exact match.                                      |
+| `actorType`     | `string`                          | Exact match.                                      |
+| `targetId`      | `string`                          | Exact match.                                      |
+| `targetType`    | `string`                          | Exact match.                                      |
+| `correlationId` | `string`                          | Exact match.                                      |
+| `requestId`     | `string`                          | Exact match.                                      |
+| `environment`   | `string`                          | Exact match.                                      |
+| `mode`          | `"sync" \| "async"`               | Exact match.                                      |
+| `from`          | `Date \| string`                  | Inclusive lower bound on `occurredAt`.            |
+| `to`            | `Date \| string`                  | Inclusive upper bound on `occurredAt`.            |
+| `limit`         | `number` (1..500, default `50`)   | `findMany` only. Rejected on `count`.             |
+| `offset`        | `number` (>= 0, default `0`)      | `findMany` only. Rejected on `count`.             |
+| `order`         | `"asc" \| "desc"` (default `"desc"`) | Applied to `(occurred_at, id)`. `findMany` only. |
+
+All string filters are compared with plain equality — no `LIKE`, no regex.
+Unknown keys are rejected with `ValidationError` so typos never silently
+widen the result set. `from > to` is rejected eagerly for the same reason.
+
+Ordering is always `ORDER BY occurred_at <dir>, id <dir>`: the UUID id
+breaks ties so pagination is deterministic at a given point in time. Under
+concurrent writes, prefer bounding the query with a `from`/`to` window.
+
+### Scopes on the Read API
+
+`query.scope(overrides)` mirrors the write-side API: it derives a new
+`TracevaultQuery` that **shares the root's pool** but reads from a
+different table. Only `tableName` may be overridden — `driver` and
+`connectionString` are inherited and cannot be changed.
+
+```ts
+const userQuery = query.scope({ tableName: "audit_user_events" });
+const txQuery   = query.scope({ tableName: "audit_transaction_events" });
+
+const merchantPayments = await txQuery.count({
+  event: "payment.intent.created",
+  actorId: "merchant_42",
+  actorType: "merchant",
+});
+```
+
+### Lifecycle and `close()`
+
+Same contract as the write API:
+
+| Call                | Effect                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `scope.close()`     | Marks this scope unusable. The root pool keeps serving the root and sibling scopes.    |
+| `root.close()`      | Marks every live scope unusable, then releases the shared pool.                        |
+
+`close()` is idempotent. Calling `findMany`/`findById`/`count`/`scope` after
+`close()` throws `TracevaultError`. `healthcheck()` returns `false`.
+
+### Errors
+
+The Read API throws from the same hierarchy as the write API:
+
+- `ConfigError` — bad `config` or bad `scope()` overrides.
+- `ValidationError` — bad filter shape (wrong key, wrong type, `limit`
+  out of range, unparseable date, non-UUID passed to `findById`, …).
+- `DriverError` — the underlying Postgres query failed (e.g. the table
+  does not exist, the connection is unreachable).
+- `TracevaultError` — the parent class; useful for a single `instanceof`
+  catch. Also thrown when operating on a closed instance.
+
+### Raw SQL still works
+
+The Read API is a convenience. The underlying schema is public and
+Tracevault will never fight you for it — if you need group-by aggregations,
+CTEs, or JSONB path queries, reach for `pg`, `drizzle`, `knex`, or raw SQL
+directly. The library is designed to coexist peacefully with them.
 
 ## API
 
@@ -418,10 +515,28 @@ import { generateInitSql } from "tracevault";
 generateInitSql(tableName) // string  — DDL for an audit table (validated, does not execute)
 ```
 
+And the Read API, exported from a separate subpath:
+
+```ts
+import { createTracevaultQuery } from "tracevault/query";
+
+const query: TracevaultQuery = createTracevaultQuery(config);
+
+query.findMany(filters?)    // Promise<AuditRecord[]>
+query.findById(id)          // Promise<AuditRecord | null>
+query.count(filters?)       // Promise<number>
+query.scope(overrides?)     // TracevaultQuery — shares the pool, reads from another table
+query.close()               // Promise<void> — same root/scope semantics as the write API
+query.healthcheck()         // Promise<boolean>
+```
+
 All types (`AuditEvent`, `AuditDiffEvent`, `TracevaultConfig`,
 `TracevaultScopeOverrides`, `PersistedRecord`, `AuditActor`, `AuditTarget`,
 `AuditMode`, `Diff`, `DiffEntry`, `TracevaultError`, `ConfigError`,
 `ValidationError`, `DriverError`) are exported from the package entry.
+Read-specific types (`AuditRecord`, `AuditQueryFilters`,
+`AuditCountFilters`, `TracevaultQuery`, `TracevaultQueryConfig`,
+`TracevaultQueryScopeOverrides`) are exported from `tracevault/query`.
 
 ## Example
 
@@ -472,14 +587,16 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for more detail.
   for additional tables used by scopes.
 - **No built-in retries.** Sync `emit` throws on failure; async `emit`
   delivers the error to `onError(err, record)` exactly once.
-- **No query/read API.** Tracevault writes events; reading is your decision.
+- **Narrow Read API.** `tracevault/query` supports equality filters, a time
+  window, deterministic pagination, and per-table scopes. No JSONB
+  deep-filtering, no joins, no aggregations, no cross-table queries — those
+  are your call, with raw SQL.
 - **Shallow diff.** `emitDiff` compares top-level keys. Nested objects are
   compared structurally for equality and emitted as a single diff entry when
   they differ.
 
 ## Roadmap
 
-- Optional read API (paginated query helpers over the `audit_logs` table).
 - Additional drivers (MySQL, SQLite, file, HTTP sink).
 - Optional durable async queue (disk-backed or Redis-backed).
 - Per-event TTL / retention hooks.
