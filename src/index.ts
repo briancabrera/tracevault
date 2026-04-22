@@ -7,6 +7,7 @@ export {
 } from "./core/errors.js";
 export { computeDiff } from "./core/differ.js";
 export { mask, DEFAULT_MASK_VALUE } from "./core/masker.js";
+export { generateInitSql } from "./core/schema.js";
 
 export type {
   AuditActor,
@@ -20,4 +21,5 @@ export type {
   PersistedRecord,
   Tracevault,
   TracevaultConfig,
+  TracevaultScopeOverrides,
 } from "./types/index.js";

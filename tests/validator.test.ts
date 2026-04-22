@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { ConfigError, ValidationError } from "../src/core/errors.js";
 import {
+  assertValidTableName,
   validateConfig,
   validateDiffEvent,
   validateEvent,
+  validateScopeOverrides,
 } from "../src/core/validator.js";
 import type { TracevaultConfig } from "../src/types/index.js";
 
@@ -218,6 +220,93 @@ describe("validateEvent", () => {
     expect(() =>
       validateEvent({ event: "x", requestId: "" as unknown as string }),
     ).toThrow(ValidationError);
+  });
+});
+
+describe("assertValidTableName", () => {
+  it("accepts typical valid names", () => {
+    expect(() => assertValidTableName("audit_logs", "ctx")).not.toThrow();
+    expect(() => assertValidTableName("_underscore", "ctx")).not.toThrow();
+    expect(() => assertValidTableName("Audit_123", "ctx")).not.toThrow();
+  });
+
+  it("rejects names violating the policy and includes the context prefix", () => {
+    expect(() => assertValidTableName("1bad", "generateInitSql")).toThrow(
+      /generateInitSql: `tableName`/,
+    );
+    expect(() => assertValidTableName("a".repeat(64), "ctx")).toThrow(ConfigError);
+    expect(() => assertValidTableName("", "ctx")).toThrow(ConfigError);
+    expect(() => assertValidTableName("bad-name", "ctx")).toThrow(ConfigError);
+    expect(() => assertValidTableName(42 as unknown as string, "ctx")).toThrow(
+      ConfigError,
+    );
+  });
+});
+
+describe("validateScopeOverrides", () => {
+  it("accepts undefined / null / empty object", () => {
+    expect(() => validateScopeOverrides(undefined)).not.toThrow();
+    expect(() => validateScopeOverrides(null)).not.toThrow();
+    expect(() => validateScopeOverrides({})).not.toThrow();
+  });
+
+  it("rejects non-object inputs", () => {
+    expect(() => validateScopeOverrides(42 as unknown)).toThrow(ConfigError);
+    expect(() => validateScopeOverrides([] as unknown)).toThrow(ConfigError);
+    expect(() => validateScopeOverrides("hi" as unknown)).toThrow(ConfigError);
+  });
+
+  it("rejects driver / connectionString explicitly", () => {
+    expect(() =>
+      validateScopeOverrides({ driver: "postgres" } as unknown),
+    ).toThrow(/cannot be overridden/);
+    expect(() =>
+      validateScopeOverrides({ connectionString: "x" } as unknown),
+    ).toThrow(/cannot be overridden/);
+  });
+
+  it("rejects unknown keys", () => {
+    expect(() => validateScopeOverrides({ frobnicate: true } as unknown)).toThrow(
+      /unknown override `frobnicate`/,
+    );
+  });
+
+  it("accepts valid full override set", () => {
+    expect(() =>
+      validateScopeOverrides({
+        tableName: "audit_user_events",
+        defaultMode: "async",
+        environment: "prod",
+        maskFields: ["secret"],
+        maskValue: "***",
+        onError: () => {},
+        asyncBatchSize: 10,
+        asyncFlushIntervalMs: 25,
+      }),
+    ).not.toThrow();
+  });
+
+  it("applies field-level validation for each override", () => {
+    expect(() => validateScopeOverrides({ tableName: "bad-name" })).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ defaultMode: "fire" as unknown as "sync" }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ maskFields: "password" as unknown as string[] }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ maskValue: 42 as unknown as string }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ environment: 1 as unknown as string }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ onError: "nope" as unknown as () => void }),
+    ).toThrow(ConfigError);
+    expect(() => validateScopeOverrides({ asyncBatchSize: 0 })).toThrow(ConfigError);
+    expect(() => validateScopeOverrides({ asyncFlushIntervalMs: -1 })).toThrow(
+      ConfigError,
+    );
   });
 });
 

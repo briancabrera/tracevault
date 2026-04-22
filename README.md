@@ -149,6 +149,125 @@ Notes on the diff shape:
 - Nested objects are compared structurally for equality; when they differ, the
   whole subtree is emitted as one diff entry (no path flattening).
 
+## Multi-table audits with scopes
+
+One `createTracevault(...)` owns a single `pg.Pool`. From that root you can derive
+as many **scopes** as you want — each writing to its own table — via `root.scope(...)`:
+
+```ts
+const root = createTracevault({
+  driver: "postgres",
+  connectionString: process.env.DATABASE_URL ?? "",
+  tableName: "audit_logs",
+  maskFields: ["password", "token", "pin", "biometricData"],
+  defaultMode: "sync",
+  environment: process.env.NODE_ENV,
+});
+
+const userAudit = root.scope({ tableName: "audit_user_events" });
+const txAudit   = root.scope({ tableName: "audit_transaction_events", defaultMode: "sync" });
+
+await userAudit.emit({
+  event: "user.profile.updated",
+  actor:  { id: "user_123", type: "user" },
+  target: { id: "user_123", type: "user" },
+  data:   { field: "phone" },
+});
+
+await txAudit.emit({
+  event: "payment.intent.created",
+  actor:  { id: "merchant_42", type: "merchant" },
+  target: { id: "payment_987", type: "payment" },
+  data:   { amount: 1200, currency: "UYU" },
+});
+```
+
+Scopes are explicit by design:
+
+- **Tables are chosen when you create the scope**, never per-event. `emit()` and
+  `emitDiff()` intentionally ignore any `tableName` in the payload — it would
+  just be another stringly-typed routing mechanism.
+- **There is no event-name-based routing.** If an event should land in a
+  different table, use a different scope.
+- **Scopes share the root's connection pool.** No extra connections, no extra
+  lifecycle to manage.
+
+### What scopes inherit and what they can override
+
+A scope inherits *every* setting from its parent (the root, or another scope).
+Only the following fields may be overridden:
+
+| Override                | Effect                                                              |
+| ----------------------- | ------------------------------------------------------------------- |
+| `tableName`             | Write to a different audit table.                                   |
+| `defaultMode`           | Switch the scope's default `sync`/`async` behavior.                 |
+| `environment`           | Stamp a different `environment` on the scope's events.              |
+| `maskFields`            | Replace (not merge) the set of sensitive field names.               |
+| `maskValue`             | Replace the masking placeholder.                                    |
+| `onError`               | Route this scope's async failures to a different handler.           |
+| `asyncBatchSize`        | Tune the scope's async batch size.                                  |
+| `asyncFlushIntervalMs`  | Tune the scope's async flush cadence.                               |
+
+`driver` and `connectionString` are **not** overridable — trying to do so
+throws `ConfigError` with a clear message.
+
+Every other key also throws `ConfigError`. There is no implicit passthrough.
+
+### Queues are per-scope
+
+Each scope maintains its **own** async queue. That means:
+
+- `scope.flush()` drains only that scope's buffered events.
+- `scope.close()` flushes and tears down that scope's queue — the shared pool
+  and all other scopes keep working.
+- A scope's `onError` only receives failures from its own inserts.
+
+### `close()` semantics
+
+| Call                | What it does                                                                 |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `scope.close()`     | Drains this scope's queue, marks it unusable. The root pool is untouched.    |
+| `root.close()`      | Drains the root's queue, drains every live scope's queue, then releases the pool. Every scope then rejects `emit()` / `emitDiff()` and reports `healthcheck() === false`. |
+
+`close()` is idempotent on both the root and each scope. Creating a new scope
+(`root.scope(...)`) after the root is closed throws `TracevaultError`.
+
+### Migrating several tables — `generateInitSql`
+
+Tracevault does not auto-create tables at boot. For the default `audit_logs`
+table, keep using the shipped migration:
+
+```bash
+psql "$DATABASE_URL" -f node_modules/tracevault/sql/001_init_audit_logs.sql
+```
+
+For additional tables used by scopes, generate the DDL with `generateInitSql`
+and pipe it through whatever migration tool you already use:
+
+```ts
+import { generateInitSql } from "tracevault";
+
+// Same schema as audit_logs, but for a different table.
+const ddl = generateInitSql("audit_user_events");
+console.log(ddl);
+// -> CREATE TABLE IF NOT EXISTS "audit_user_events" ( … ); CREATE INDEX …
+```
+
+Or straight from the shell:
+
+```bash
+node -e 'console.log(require("tracevault").generateInitSql("audit_user_events"))' \
+  | psql "$DATABASE_URL"
+```
+
+`generateInitSql`:
+
+- Validates the table name with the same strict policy as `tableName`
+  (`/^[A-Za-z_][A-Za-z0-9_]*$/`, max 63 chars); invalid names throw `ConfigError`.
+- **Never executes anything.** It only returns a string.
+- Uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`, so it is
+  safe to run repeatedly.
+
 ## Configuration
 
 | Option                 | Type                        | Default        | Notes                                                              |
@@ -283,17 +402,26 @@ LIMIT 100;
 ```ts
 const audit: Tracevault = createTracevault(config);
 
-audit.emit(event)        // Promise<void>
-audit.emitDiff(event)    // Promise<void>
-audit.flush()            // Promise<void>  — wait for async queue to drain
-audit.close()            // Promise<void>  — flush + release DB pool (idempotent)
-audit.healthcheck()      // Promise<boolean>
+audit.emit(event)          // Promise<void>
+audit.emitDiff(event)      // Promise<void>
+audit.flush()              // Promise<void>  — drain this instance's async queue
+audit.close()              // Promise<void>  — root: flush every scope + release pool; scope: flush own queue only (idempotent)
+audit.healthcheck()        // Promise<boolean>
+audit.scope(overrides?)    // Tracevault   — derive a sibling that shares the pool but writes to a different table
 ```
 
-All types (`AuditEvent`, `AuditDiffEvent`, `TracevaultConfig`, `PersistedRecord`,
-`AuditActor`, `AuditTarget`, `AuditMode`, `Diff`, `DiffEntry`,
-`TracevaultError`, `ConfigError`, `ValidationError`, `DriverError`) are
-exported from the package entry.
+Plus the standalone helper:
+
+```ts
+import { generateInitSql } from "tracevault";
+
+generateInitSql(tableName) // string  — DDL for an audit table (validated, does not execute)
+```
+
+All types (`AuditEvent`, `AuditDiffEvent`, `TracevaultConfig`,
+`TracevaultScopeOverrides`, `PersistedRecord`, `AuditActor`, `AuditTarget`,
+`AuditMode`, `Diff`, `DiffEntry`, `TracevaultError`, `ConfigError`,
+`ValidationError`, `DriverError`) are exported from the package entry.
 
 ## Example
 
@@ -339,7 +467,9 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for more detail.
 
 - **PostgreSQL only.** No MySQL, SQLite, Mongo, or file sink in V1.
 - **No distributed queue.** Async mode is in-process and non-durable.
-- **No automatic schema management.** The migration SQL is run manually.
+- **No automatic schema management.** Tracevault never creates tables at boot.
+  Use `sql/001_init_audit_logs.sql` for the default table and `generateInitSql`
+  for additional tables used by scopes.
 - **No built-in retries.** Sync `emit` throws on failure; async `emit`
   delivers the error to `onError(err, record)` exactly once.
 - **No query/read API.** Tracevault writes events; reading is your decision.

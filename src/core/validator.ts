@@ -4,6 +4,7 @@ import type {
   AuditEvent,
   AuditTarget,
   TracevaultConfig,
+  TracevaultScopeOverrides,
 } from "../types/index.js";
 import { ConfigError, ValidationError } from "./errors.js";
 import { assertJsonSerializable } from "./serialization.js";
@@ -18,6 +19,43 @@ const MAX_ENVIRONMENT_LEN = 128;
 const MAX_TABLE_NAME_LEN = 63; // PostgreSQL identifier limit
 
 const TABLE_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Fields the `scope()` method is allowed to override. Any other key — and
+ * crucially `driver` / `connectionString` — causes a `ConfigError`.
+ */
+const ALLOWED_SCOPE_OVERRIDE_KEYS = new Set<keyof TracevaultScopeOverrides>([
+  "tableName",
+  "defaultMode",
+  "environment",
+  "maskFields",
+  "maskValue",
+  "onError",
+  "asyncBatchSize",
+  "asyncFlushIntervalMs",
+]);
+
+/**
+ * Validate a table name against Tracevault's strict policy.
+ *
+ * Exported because both `validateConfig`, `validateScopeOverrides` and the
+ * `generateInitSql` utility must apply the exact same rule.
+ */
+export function assertValidTableName(value: unknown, context: string): asserts value is string {
+  if (typeof value !== "string") {
+    throw new ConfigError(`${context}: \`tableName\` must be a string.`);
+  }
+  if (value.length === 0 || value.length > MAX_TABLE_NAME_LEN) {
+    throw new ConfigError(
+      `${context}: \`tableName\` length must be between 1 and ${MAX_TABLE_NAME_LEN}.`,
+    );
+  }
+  if (!TABLE_NAME_REGEX.test(value)) {
+    throw new ConfigError(
+      `${context}: \`tableName\` must match /^[A-Za-z_][A-Za-z0-9_]*$/ (letters, digits, underscores; no leading digit).`,
+    );
+  }
+}
 
 export function validateConfig(config: TracevaultConfig): void {
   if (!config || typeof config !== "object") {
@@ -41,19 +79,7 @@ export function validateConfig(config: TracevaultConfig): void {
   }
 
   if (config.tableName !== undefined) {
-    if (typeof config.tableName !== "string") {
-      throw new ConfigError("Tracevault config: `tableName` must be a string.");
-    }
-    if (config.tableName.length === 0 || config.tableName.length > MAX_TABLE_NAME_LEN) {
-      throw new ConfigError(
-        `Tracevault config: \`tableName\` length must be between 1 and ${MAX_TABLE_NAME_LEN}.`,
-      );
-    }
-    if (!TABLE_NAME_REGEX.test(config.tableName)) {
-      throw new ConfigError(
-        "Tracevault config: `tableName` must match /^[A-Za-z_][A-Za-z0-9_]*$/ (letters, digits, underscores; no leading digit).",
-      );
-    }
+    assertValidTableName(config.tableName, "Tracevault config");
   }
 
   if (config.defaultMode !== undefined && !VALID_MODES.has(config.defaultMode)) {
@@ -63,16 +89,7 @@ export function validateConfig(config: TracevaultConfig): void {
   }
 
   if (config.maskFields !== undefined) {
-    if (!Array.isArray(config.maskFields)) {
-      throw new ConfigError("Tracevault config: `maskFields` must be an array of strings.");
-    }
-    for (const field of config.maskFields) {
-      if (typeof field !== "string" || field.length === 0) {
-        throw new ConfigError(
-          "Tracevault config: every `maskFields` entry must be a non-empty string.",
-        );
-      }
-    }
+    assertValidMaskFields(config.maskFields, "Tracevault config");
   }
 
   if (config.maskValue !== undefined && typeof config.maskValue !== "string") {
@@ -80,14 +97,7 @@ export function validateConfig(config: TracevaultConfig): void {
   }
 
   if (config.environment !== undefined) {
-    if (typeof config.environment !== "string") {
-      throw new ConfigError("Tracevault config: `environment` must be a string.");
-    }
-    if (config.environment.length > MAX_ENVIRONMENT_LEN) {
-      throw new ConfigError(
-        `Tracevault config: \`environment\` must be at most ${MAX_ENVIRONMENT_LEN} characters.`,
-      );
-    }
+    assertValidEnvironment(config.environment, "Tracevault config");
   }
 
   if (config.onError !== undefined && typeof config.onError !== "function") {
@@ -106,6 +116,98 @@ export function validateConfig(config: TracevaultConfig): void {
         "Tracevault config: `asyncFlushIntervalMs` must be a non-negative finite number.",
       );
     }
+  }
+}
+
+/**
+ * Validate the overrides passed to `scope()`. Rejects unknown keys and
+ * explicitly rejects attempts to override `driver` / `connectionString`.
+ */
+export function validateScopeOverrides(overrides: unknown): void {
+  if (overrides === undefined || overrides === null) return;
+  if (typeof overrides !== "object" || Array.isArray(overrides)) {
+    throw new ConfigError("Tracevault scope: overrides must be a plain object.");
+  }
+
+  for (const key of Object.keys(overrides)) {
+    if (key === "driver" || key === "connectionString") {
+      throw new ConfigError(
+        `Tracevault scope: \`${key}\` cannot be overridden on a scope (it is inherited from the root).`,
+      );
+    }
+    if (!ALLOWED_SCOPE_OVERRIDE_KEYS.has(key as keyof TracevaultScopeOverrides)) {
+      throw new ConfigError(
+        `Tracevault scope: unknown override \`${key}\`. Allowed: ${Array.from(
+          ALLOWED_SCOPE_OVERRIDE_KEYS,
+        ).join(", ")}.`,
+      );
+    }
+  }
+
+  const o = overrides as Record<string, unknown>;
+
+  if (o.tableName !== undefined) {
+    assertValidTableName(o.tableName, "Tracevault scope");
+  }
+
+  if (o.defaultMode !== undefined && (typeof o.defaultMode !== "string" || !VALID_MODES.has(o.defaultMode))) {
+    throw new ConfigError(
+      `Tracevault scope: \`defaultMode\` must be "sync" or "async", got "${String(o.defaultMode)}".`,
+    );
+  }
+
+  if (o.maskFields !== undefined) {
+    assertValidMaskFields(o.maskFields, "Tracevault scope");
+  }
+
+  if (o.maskValue !== undefined && typeof o.maskValue !== "string") {
+    throw new ConfigError("Tracevault scope: `maskValue` must be a string.");
+  }
+
+  if (o.environment !== undefined) {
+    assertValidEnvironment(o.environment, "Tracevault scope");
+  }
+
+  if (o.onError !== undefined && typeof o.onError !== "function") {
+    throw new ConfigError("Tracevault scope: `onError` must be a function.");
+  }
+
+  if (o.asyncBatchSize !== undefined) {
+    if (!Number.isInteger(o.asyncBatchSize) || (o.asyncBatchSize as number) <= 0) {
+      throw new ConfigError("Tracevault scope: `asyncBatchSize` must be a positive integer.");
+    }
+  }
+
+  if (o.asyncFlushIntervalMs !== undefined) {
+    if (!Number.isFinite(o.asyncFlushIntervalMs) || (o.asyncFlushIntervalMs as number) < 0) {
+      throw new ConfigError(
+        "Tracevault scope: `asyncFlushIntervalMs` must be a non-negative finite number.",
+      );
+    }
+  }
+}
+
+function assertValidMaskFields(value: unknown, context: string): void {
+  if (!Array.isArray(value)) {
+    throw new ConfigError(`${context}: \`maskFields\` must be an array of strings.`);
+  }
+  for (const field of value) {
+    if (typeof field !== "string" || field.length === 0) {
+      throw new ConfigError(
+        `${context}: every \`maskFields\` entry must be a non-empty string.`,
+      );
+    }
+  }
+}
+
+function assertValidEnvironment(value: unknown, context: string): void {
+  if (typeof value !== "string") {
+    throw new ConfigError(`${context}: \`environment\` must be a string.`);
+  }
+  if (value.length > MAX_ENVIRONMENT_LEN) {
+    throw new ConfigError(
+      `${context}: \`environment\` must be at most ${MAX_ENVIRONMENT_LEN} characters.`,
+    );
   }
 }
 

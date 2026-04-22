@@ -614,4 +614,49 @@ describe("integration / lifecycle", () => {
       await dbClient.query(`DROP TABLE IF EXISTS "${customTable}"`);
     }
   });
+
+  it("close() fired while a sync emit is still in flight waits for the row", async () => {
+    // pg.Pool.end() is documented to wait for in-flight clients to complete.
+    // We rely on that guarantee here so no row is lost on shutdown.
+    const audit = newAudit();
+    const pending = audit.emit({ event: "inflight.sync.root" });
+    const closed = audit.close();
+    await Promise.all([pending, closed]);
+
+    const rows = await selectAll(dbClient);
+    expect(rows.map((r) => r.event)).toEqual(["inflight.sync.root"]);
+  });
+
+  it("healthcheck stays true while many concurrent emits hit the same pool", async () => {
+    const audit = newAudit();
+    try {
+      const N = 40;
+      const emits = Array.from({ length: N }, (_, i) =>
+        audit.emit({ event: "hc.under.load", data: { i } }),
+      );
+      // Fire a burst of healthchecks interleaved with the emits.
+      const checks = Array.from({ length: 10 }, () => audit.healthcheck());
+      const [checkResults] = await Promise.all([Promise.all(checks), Promise.all(emits)]);
+
+      expect(checkResults.every((ok) => ok === true)).toBe(true);
+      expect(await selectAll(dbClient)).toHaveLength(N);
+    } finally {
+      await audit.close();
+    }
+    expect(await audit.healthcheck()).toBe(false);
+  });
+
+  it("many concurrent close() calls from different callers all resolve together", async () => {
+    const audit = newAudit({ defaultMode: "async" });
+    for (let i = 0; i < 40; i++) await audit.emit({ event: "race.close", data: { i } });
+
+    // Simulate three different subsystems all trying to shut down at once
+    // (e.g. SIGINT handler + shutdown hook + health drain). They must all
+    // observe the same successful drain.
+    await Promise.all([audit.close(), audit.close(), audit.close()]);
+
+    expect(await selectAll(dbClient)).toHaveLength(40);
+    expect(await audit.healthcheck()).toBe(false);
+    await expect(audit.emit({ event: "after" })).rejects.toThrow(/closed/);
+  });
 });

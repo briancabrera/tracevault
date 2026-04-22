@@ -126,6 +126,24 @@ export interface PersistedRecord {
 }
 
 /**
+ * Fields that a scope may override on top of the root config.
+ *
+ * The storage target (`driver`, `connectionString`) is intentionally *not*
+ * overridable: scopes share the root's connection pool and only differ in
+ * which table they write to and a handful of behavior knobs.
+ */
+export interface TracevaultScopeOverrides {
+  tableName?: string;
+  defaultMode?: AuditMode;
+  environment?: string;
+  maskFields?: readonly string[];
+  maskValue?: string;
+  onError?: (error: Error, record: PersistedRecord) => void;
+  asyncBatchSize?: number;
+  asyncFlushIntervalMs?: number;
+}
+
+/**
  * Public Tracevault instance returned by `createTracevault`.
  */
 export interface Tracevault {
@@ -133,8 +151,20 @@ export interface Tracevault {
   emitDiff(event: AuditDiffEvent): Promise<void>;
   /** Waits for all queued async events to be processed. */
   flush(): Promise<void>;
-  /** Flushes and releases underlying resources (DB pool). */
+  /**
+   * On the root instance: flushes every scope and releases the shared DB pool.
+   * On a scope: flushes the scope's own queue only — the root pool is untouched.
+   * Idempotent: safe to call multiple times.
+   */
   close(): Promise<void>;
-  /** Returns `true` if the underlying driver is reachable. */
+  /** Returns `true` if the underlying driver is reachable and the instance is open. */
   healthcheck(): Promise<boolean>;
+  /**
+   * Derive a new Tracevault that shares the root's connection pool but writes
+   * to a different table and/or overrides a subset of behavior options.
+   *
+   * Scopes inherit every root option; only the fields listed in
+   * `TracevaultScopeOverrides` may be changed.
+   */
+  scope(overrides?: TracevaultScopeOverrides): Tracevault;
 }

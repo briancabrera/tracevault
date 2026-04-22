@@ -17,7 +17,7 @@ import { dirname, resolve } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(__dirname, "..", "dist");
 
-const EXPECTED_FUNCTIONS = ["createTracevault", "computeDiff", "mask"];
+const EXPECTED_FUNCTIONS = ["createTracevault", "computeDiff", "mask", "generateInitSql"];
 const EXPECTED_ERROR_CLASSES = [
   "TracevaultError",
   "ConfigError",
@@ -75,14 +75,38 @@ async function createAndCloseInstance(createTracevault) {
     maskFields: ["password"],
   });
 
-  for (const method of ["emit", "emitDiff", "flush", "close", "healthcheck"]) {
+  for (const method of ["emit", "emitDiff", "flush", "close", "healthcheck", "scope"]) {
     if (typeof audit[method] !== "function") {
       fail(`Tracevault instance is missing method \`${method}\`.`);
     }
   }
 
+  const scoped = audit.scope({ tableName: "audit_smoke_scope" });
+  for (const method of ["emit", "emitDiff", "flush", "close", "healthcheck", "scope"]) {
+    if (typeof scoped[method] !== "function") {
+      fail(`Scope Tracevault instance is missing method \`${method}\`.`);
+    }
+  }
+
   await audit.close();
   await audit.close();
+}
+
+function assertGenerateInitSql(moduleName, mod) {
+  const ddl = mod.generateInitSql("audit_smoke_scope");
+  if (typeof ddl !== "string" || !ddl.includes('CREATE TABLE IF NOT EXISTS "audit_smoke_scope"')) {
+    fail(`${moduleName}: generateInitSql did not produce the expected DDL.`);
+  }
+  try {
+    mod.generateInitSql("bad-name;DROP");
+    fail(`${moduleName}: expected ConfigError for invalid table name in generateInitSql.`);
+  } catch (err) {
+    if (!(err instanceof mod.ConfigError)) {
+      fail(
+        `${moduleName}: expected ConfigError from generateInitSql, got ${err?.name ?? typeof err}.`,
+      );
+    }
+  }
 }
 
 async function main() {
@@ -103,6 +127,9 @@ async function main() {
 
   await createAndCloseInstance(cjs.createTracevault);
   await createAndCloseInstance(esm.createTracevault);
+
+  assertGenerateInitSql("CJS (dist/index.js)", cjs);
+  assertGenerateInitSql("ESM (dist/index.mjs)", esm);
 
   try {
     cjs.createTracevault({ driver: "mysql", connectionString: "x" });
