@@ -49,8 +49,15 @@ normalization, and persistence.
 - **Sync** persistence (write-through) or **async** persistence (in-process queue).
 - **PostgreSQL** driver with `JSONB`-first, event-oriented schema.
 - **Multi-table audits via `scope()`** — one pool, many tables, one API.
-- **Narrow Read API** (`tracevault/query`) — equality filters, time windows,
-  deterministic pagination, per-table scopes. No DSL, no magic.
+- **Narrow Read API** (`tracevault/query`) — equality filters (including
+  generated `outcome` / `errorCode` / `severity`), `errorsOnly` shorthand,
+  `severities` list filter, time windows, deterministic pagination, per-table
+  scopes. No DSL, no magic.
+- **Correlation helpers** — `randomCorrelationId`, `readCorrelationIdHeader`,
+  `resolveCorrelationId` for consistent `correlationId` on emits.
+- **Optional generated columns** (PostgreSQL migrations **002**–**003**) —
+  `outcome`, `error_code`, and `severity` derived from `data` for indexed reads
+  without losing custom events.
 - **Idempotent lifecycle** — `close()` is safe to call multiple times.
 - **Zero runtime dependencies** beyond `pg`.
 
@@ -67,9 +74,18 @@ npm install tracevault pg
 
 ```bash
 psql "$DATABASE_URL" -f node_modules/tracevault/sql/001_init_audit_logs.sql
+psql "$DATABASE_URL" -f node_modules/tracevault/sql/002_audit_logs_outcome_error_code.sql
+psql "$DATABASE_URL" -f node_modules/tracevault/sql/003_audit_logs_severity.sql
 ```
 
-The SQL file is shipped with the package under `sql/001_init_audit_logs.sql`.
+Shipped SQL lives under `sql/` in the package. **001** creates the table; **002**
+adds optional STORED generated columns `outcome` and `error_code` (derived from
+`data`) plus supporting indexes; **003** adds generated `severity` from
+`data.severity` plus an index. Greenfield projects can instead run
+`generateInitSql("audit_logs")` once for an equivalent combined DDL.
+
+> If you use a custom `tableName`, run **001** with the name substituted, then
+> adapt **002** and **003** (replace `"audit_logs"`) or use `generateInitSql("your_table")`.
 
 ## Quick start
 
@@ -238,14 +254,17 @@ Each scope maintains its **own** async queue. That means:
 ### Migrating several tables — `generateInitSql`
 
 Tracevault does not auto-create tables at boot. For the default `audit_logs`
-table, keep using the shipped migration:
+table, apply **all** shipped migrations in order:
 
 ```bash
 psql "$DATABASE_URL" -f node_modules/tracevault/sql/001_init_audit_logs.sql
+psql "$DATABASE_URL" -f node_modules/tracevault/sql/002_audit_logs_outcome_error_code.sql
+psql "$DATABASE_URL" -f node_modules/tracevault/sql/003_audit_logs_severity.sql
 ```
 
 For additional tables used by scopes, generate the DDL with `generateInitSql`
-and pipe it through whatever migration tool you already use:
+(which already matches **001 + 002 + 003** for that table name) and pipe it through
+whatever migration tool you already use:
 
 ```ts
 import { generateInitSql } from "tracevault";
@@ -364,7 +383,10 @@ Tracevault persists every event to a single, JSONB-first table. The schema is
 intentionally event-oriented — no `old_values` / `new_values` columns, no
 compliance-specific taxonomy.
 
-See [`sql/001_init_audit_logs.sql`](./sql/001_init_audit_logs.sql) for the full DDL.
+See [`sql/001_init_audit_logs.sql`](./sql/001_init_audit_logs.sql),
+[`sql/002_audit_logs_outcome_error_code.sql`](./sql/002_audit_logs_outcome_error_code.sql),
+[`sql/003_audit_logs_severity.sql`](./sql/003_audit_logs_severity.sql),
+or use `generateInitSql("audit_logs")` for an equivalent one-shot DDL.
 
 | Column           | Type          | Notes                               |
 | ---------------- | ------------- | ----------------------------------- |
@@ -382,14 +404,47 @@ See [`sql/001_init_audit_logs.sql`](./sql/001_init_audit_logs.sql) for the full 
 | `correlation_id` | `VARCHAR`     | Nullable.                           |
 | `request_id`     | `VARCHAR`     | Nullable.                           |
 | `environment`    | `VARCHAR`     | Nullable.                           |
+| `outcome`        | `VARCHAR(64)` | **Generated (migration 002+).** `NULLIF(BTRIM(data->>'outcome'),'')`. Omitted in inserts. |
+| `error_code`     | `VARCHAR(255)` | **Generated.** `NULLIF(BTRIM(data->'error'->>'code'),'')`. Omitted in inserts. |
+| `severity`       | `VARCHAR(32)` | **Generated (migration 003+).** `NULLIF(BTRIM(data->>'severity'),'')`. Omitted in inserts. |
 
 Default indexes are created on `event`, `(actor_id, actor_type)`,
-`(target_id, target_type)`, and `occurred_at DESC`.
+`(target_id, target_type)`, `occurred_at DESC`, partial
+`(correlation_id, occurred_at DESC, id DESC)` where `correlation_id IS NOT NULL`,
+partial `(error_code, occurred_at DESC)` where `error_code IS NOT NULL`,
+partial `(outcome, occurred_at DESC)` where `outcome IS NOT NULL`, and
+partial `(severity, occurred_at DESC)` where `severity IS NOT NULL`.
+
+## Correlation IDs and structured outcomes (optional)
+
+Tracevault stays **custom-events-first**: nothing here is validated by the
+library. These are recommended patterns for consoles and dashboards.
+
+- **Correlation** — use the same `correlationId` on every `emit` that belongs
+  to one logical operation (checkout, login attempt, …). Helpers exported from
+  the main entry point:
+  - `randomCorrelationId()`
+  - `readCorrelationIdHeader((name) => req.get(name))`
+  - `resolveCorrelationId(...)` — header when present, otherwise a new UUID.
+- **Structured failures** — inside `data`, optional keys consumed by generated
+  columns (after migrations **002**–**003**):
+  - `outcome`: e.g. `"success"` / `"failure"`.
+  - `error`: `{ "code": "AUTH_INVALID_CREDENTIALS", "stage": "…", … }` — only
+    `code` is mirrored to the `error_code` column for indexed queries.
+  - `severity`: e.g. `"warning"` — mirrored to the `severity` column. Suggested
+    ordinal scale (export `DOCUMENTED_SEVERITY_LEVELS` from `tracevault/query`):
+    from `debug` through `fatal`, increasing alert importance.
+
+The Read API exposes `outcome`, `errorCode`, and `severity` on each `AuditRecord`
+and accepts filters for them. Use `errorsOnly: true` to list rows with
+`outcome = 'failure'` **or** `severity` in `error` / `critical` / `fatal` (see
+`SEVERITIES_FOR_ERRORS_ONLY_FILTER` on `tracevault/query`).
 
 ## Reading events
 
 Tracevault ships a small, explicit **Read API** under the `tracevault/query`
-subpath. It's deliberately narrow: equality filters on the indexed columns,
+subpath. It's deliberately narrow: equality filters on indexed scalar columns
+(including generated `outcome`, `error_code`, and `severity` after migrations **002**–**003**),
 an `occurred_at` window, and deterministic pagination. Anything more exotic
 (JSONB probes, aggregations, joins, analytics) is your decision and belongs
 in raw SQL.
@@ -430,6 +485,11 @@ set; `findMany` additionally accepts pagination + ordering:
 | `correlationId` | `string`                          | Exact match.                                      |
 | `requestId`     | `string`                          | Exact match.                                      |
 | `environment`   | `string`                          | Exact match.                                      |
+| `outcome`       | `string`                          | Exact match on generated column (≤ 64 chars).     |
+| `errorCode`     | `string`                          | Exact match on generated column (≤ 255 chars).  |
+| `severity`      | `string`                          | Exact match on generated column (≤ 32 chars).   |
+| `severities`    | `string[]`                        | `severity IN (...)`; max 16 entries, no duplicates. |
+| `errorsOnly`    | `boolean`                         | `true` → `outcome = 'failure'` OR `severity` in `error` / `critical` / `fatal`. ANDed with other filters. |
 | `mode`          | `"sync" \| "async"`               | Exact match.                                      |
 | `from`          | `Date \| string`                  | Inclusive lower bound on `occurredAt`.            |
 | `to`            | `Date \| string`                  | Inclusive upper bound on `occurredAt`.            |
@@ -533,10 +593,15 @@ query.healthcheck()         // Promise<boolean>
 All types (`AuditEvent`, `AuditDiffEvent`, `TracevaultConfig`,
 `TracevaultScopeOverrides`, `PersistedRecord`, `AuditActor`, `AuditTarget`,
 `AuditMode`, `Diff`, `DiffEntry`, `TracevaultError`, `ConfigError`,
-`ValidationError`, `DriverError`) are exported from the package entry.
+`ValidationError`, `DriverError`) are exported from the package entry, plus
+correlation helpers (`randomCorrelationId`, `readCorrelationIdHeader`,
+`resolveCorrelationId`) and `generateInitSql`.
+
 Read-specific types (`AuditRecord`, `AuditQueryFilters`,
 `AuditCountFilters`, `TracevaultQuery`, `TracevaultQueryConfig`,
-`TracevaultQueryScopeOverrides`) are exported from `tracevault/query`.
+`TracevaultQueryScopeOverrides`) are exported from `tracevault/query`, along
+with `DOCUMENTED_SEVERITY_LEVELS`, `SEVERITIES_FOR_ERRORS_ONLY_FILTER`, and the
+`DocumentedSeverity` type for UI and dashboards.
 
 ## Example
 
@@ -560,7 +625,9 @@ npm run test:integration
 A single command that:
 
 1. starts a PostgreSQL 16 container on port `5433`,
-2. applies `sql/001_init_audit_logs.sql` against an ephemeral
+2. applies `sql/001_init_audit_logs.sql` then `sql/002_audit_logs_outcome_error_code.sql`
+   then `sql/003_audit_logs_severity.sql`
+   against an ephemeral
    `tracevault_test` database,
 3. runs the integration Vitest suite,
 4. tears the container and its volume down — even if tests fail.
@@ -576,21 +643,23 @@ Environment variables:
 npm run test:all
 ```
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for more detail.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for more detail. Release history:
+[`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Limitations (V1)
 
 - **PostgreSQL only.** No MySQL, SQLite, Mongo, or file sink in V1.
 - **No distributed queue.** Async mode is in-process and non-durable.
 - **No automatic schema management.** Tracevault never creates tables at boot.
-  Use `sql/001_init_audit_logs.sql` for the default table and `generateInitSql`
+  Use migrations **001**–**003** for the default table, or `generateInitSql`
   for additional tables used by scopes.
 - **No built-in retries.** Sync `emit` throws on failure; async `emit`
   delivers the error to `onError(err, record)` exactly once.
-- **Narrow Read API.** `tracevault/query` supports equality filters, a time
-  window, deterministic pagination, and per-table scopes. No JSONB
-  deep-filtering, no joins, no aggregations, no cross-table queries — those
-  are your call, with raw SQL.
+- **Narrow Read API.** `tracevault/query` supports equality filters on scalar
+  columns (including generated fields), `errorsOnly` / `severities` for error
+  views, a time window on `occurredAt`, deterministic pagination, and
+  per-table scopes. No JSONB path filters, no `IS NULL` query helpers, no joins
+  or aggregations — those are your call, with raw SQL.
 - **Shallow diff.** `emitDiff` compares top-level keys. Nested objects are
   compared structurally for equality and emitted as a single diff entry when
   they differ.

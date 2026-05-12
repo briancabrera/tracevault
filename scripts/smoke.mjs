@@ -17,7 +17,15 @@ import { dirname, resolve } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(__dirname, "..", "dist");
 
-const EXPECTED_FUNCTIONS = ["createTracevault", "computeDiff", "mask", "generateInitSql"];
+const EXPECTED_FUNCTIONS = [
+  "createTracevault",
+  "computeDiff",
+  "mask",
+  "generateInitSql",
+  "randomCorrelationId",
+  "readCorrelationIdHeader",
+  "resolveCorrelationId",
+];
 const EXPECTED_ERROR_CLASSES = [
   "TracevaultError",
   "ConfigError",
@@ -102,6 +110,9 @@ function assertGenerateInitSql(moduleName, mod) {
   const ddl = mod.generateInitSql("audit_smoke_scope");
   if (typeof ddl !== "string" || !ddl.includes('CREATE TABLE IF NOT EXISTS "audit_smoke_scope"')) {
     fail(`${moduleName}: generateInitSql did not produce the expected DDL.`);
+  }
+  if (!ddl.includes("GENERATED ALWAYS AS") || !ddl.includes("error_code") || !ddl.includes("severity")) {
+    fail(`${moduleName}: generateInitSql should include generated outcome/error_code/severity columns.`);
   }
   try {
     mod.generateInitSql("bad-name;DROP");

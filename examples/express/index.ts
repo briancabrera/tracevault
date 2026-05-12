@@ -1,6 +1,6 @@
 import express, { type Request, type Response } from "express";
 
-import { createTracevault } from "tracevault";
+import { createTracevault, resolveCorrelationId } from "tracevault";
 
 const audit = createTracevault({
   driver: "postgres",
@@ -11,8 +11,22 @@ const audit = createTracevault({
   environment: process.env.NODE_ENV ?? "development",
 });
 
+type RequestWithCorrelation = Request & { correlationId: string };
+
+function correlationId(req: Request): string {
+  return (req as RequestWithCorrelation).correlationId;
+}
+
 const app = express();
 app.use(express.json());
+
+/** One correlation id per HTTP request: header if valid, else a new UUID (see README). */
+app.use((req, res, next) => {
+  const id = resolveCorrelationId((h) => req.get(h));
+  (req as RequestWithCorrelation).correlationId = id;
+  res.setHeader("x-correlation-id", id);
+  next();
+});
 
 /**
  * Emit a free-form custom event. The shape of `data` is entirely up to
@@ -31,6 +45,7 @@ app.post("/events/price-updated", async (req: Request, res: Response) => {
       ip: req.ip,
       userAgent: req.get("user-agent") ?? null,
     },
+    correlationId: correlationId(req),
     requestId: req.get("x-request-id") ?? undefined,
   });
 
@@ -51,6 +66,7 @@ app.post("/events/product-updated", async (req: Request, res: Response) => {
     before,
     after,
     meta: { source: "example-api" },
+    correlationId: correlationId(req),
   });
 
   res.status(202).json({ ok: true });

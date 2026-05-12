@@ -25,6 +25,9 @@ interface RawRow {
   correlation_id: string | null;
   request_id: string | null;
   environment: string | null;
+  outcome: string | null;
+  error_code: string | null;
+  severity: string | null;
 }
 
 /**
@@ -117,5 +120,8 @@ function mapRow<
     correlationId: row.correlation_id,
     requestId: row.request_id,
     environment: row.environment,
+    outcome: row.outcome,
+    errorCode: row.error_code,
+    severity: row.severity,
   };
 }

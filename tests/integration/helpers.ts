@@ -26,6 +26,9 @@ export interface AuditLogRow {
   correlation_id: string | null;
   request_id: string | null;
   environment: string | null;
+  outcome: string | null;
+  error_code: string | null;
+  severity: string | null;
 }
 
 export async function createDbClient(): Promise<pg.Client> {

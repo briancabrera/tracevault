@@ -14,6 +14,14 @@ const VALID_ORDERS = new Set(["asc", "desc"]);
 const MAX_IDENTIFIER_LEN = 512;
 const MAX_ENVIRONMENT_LEN = 128;
 const MAX_EVENT_NAME_LEN = 255;
+/** Matches generated column `outcome VARCHAR(64)`. */
+const MAX_OUTCOME_LEN = 64;
+/** Matches generated column `error_code VARCHAR(255)`. */
+const MAX_ERROR_CODE_LEN = 255;
+/** Matches generated column `severity VARCHAR(32)`. */
+const MAX_SEVERITY_LEN = 32;
+/** Max entries for `severities` filter. */
+const MAX_SEVERITIES_COUNT = 16;
 
 export const MAX_LIMIT = 500;
 export const DEFAULT_LIMIT = 50;
@@ -41,6 +49,11 @@ const ALLOWED_FILTER_KEYS = new Set<keyof AuditQueryFilters>([
   "correlationId",
   "requestId",
   "environment",
+  "outcome",
+  "errorCode",
+  "severity",
+  "severities",
+  "errorsOnly",
   "mode",
   "from",
   "to",
@@ -58,6 +71,11 @@ const ALLOWED_COUNT_FILTER_KEYS = new Set<keyof AuditCountFilters>([
   "correlationId",
   "requestId",
   "environment",
+  "outcome",
+  "errorCode",
+  "severity",
+  "severities",
+  "errorsOnly",
   "mode",
   "from",
   "to",
@@ -151,6 +169,36 @@ function assertString(
   }
 }
 
+function assertSeveritiesArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) {
+    throw new ValidationError("`severities` must be an array of strings.");
+  }
+  if (value.length === 0) {
+    throw new ValidationError(
+      "`severities` must be a non-empty array when provided.",
+    );
+  }
+  if (value.length > MAX_SEVERITIES_COUNT) {
+    throw new ValidationError(
+      `\`severities\` must have at most ${MAX_SEVERITIES_COUNT} entries.`,
+    );
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < value.length; i++) {
+    assertString(value[i], `severities[${i}]`, MAX_SEVERITY_LEN);
+    const s = value[i] as string;
+    if (seen.has(s)) {
+      throw new ValidationError(
+        `\`severities\` contains duplicate ${JSON.stringify(s)}.`,
+      );
+    }
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
 function assertDateOrIsoString(value: unknown, field: string): Date {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) {
@@ -184,6 +232,11 @@ export interface NormalizedQueryFilters {
   correlationId: string | null;
   requestId: string | null;
   environment: string | null;
+  outcome: string | null;
+  errorCode: string | null;
+  severity: string | null;
+  severities: readonly string[] | null;
+  errorsOnly: boolean;
   mode: "sync" | "async" | null;
   from: Date | null;
   to: Date | null;
@@ -278,6 +331,11 @@ function validateSharedFilters(
     correlationId: null,
     requestId: null,
     environment: null,
+    outcome: null,
+    errorCode: null,
+    severity: null,
+    severities: null,
+    errorsOnly: false,
     mode: null,
     from: null,
     to: null,
@@ -318,6 +376,27 @@ function validateSharedFilters(
     assertString(filters.environment, "environment", MAX_ENVIRONMENT_LEN);
     n.environment = filters.environment;
   }
+  if (filters.outcome !== undefined) {
+    assertString(filters.outcome, "outcome", MAX_OUTCOME_LEN);
+    n.outcome = filters.outcome;
+  }
+  if (filters.errorCode !== undefined) {
+    assertString(filters.errorCode, "errorCode", MAX_ERROR_CODE_LEN);
+    n.errorCode = filters.errorCode;
+  }
+  if (filters.severity !== undefined) {
+    assertString(filters.severity, "severity", MAX_SEVERITY_LEN);
+    n.severity = filters.severity;
+  }
+  if (filters.severities !== undefined) {
+    n.severities = assertSeveritiesArray(filters.severities);
+  }
+  if (filters.errorsOnly !== undefined) {
+    if (typeof filters.errorsOnly !== "boolean") {
+      throw new ValidationError("`errorsOnly` must be a boolean.");
+    }
+    n.errorsOnly = filters.errorsOnly;
+  }
   if (filters.mode !== undefined) {
     if (typeof filters.mode !== "string" || !VALID_MODES.has(filters.mode)) {
       throw new ValidationError(
@@ -351,6 +430,11 @@ function defaultNormalized(): NormalizedQueryFilters {
     correlationId: null,
     requestId: null,
     environment: null,
+    outcome: null,
+    errorCode: null,
+    severity: null,
+    severities: null,
+    errorsOnly: false,
     mode: null,
     from: null,
     to: null,

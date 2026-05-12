@@ -34,6 +34,22 @@ export interface AuditRecord<
   correlationId: string | null;
   requestId: string | null;
   environment: string | null;
+  /**
+   * STORED generated column: `NULLIF(BTRIM(data->>'outcome'), '')` when the row
+   * was created under migration V2+. Null for legacy rows or when `data` omits
+   * `outcome`. See README (correlation & structured outcomes).
+   */
+  outcome: string | null;
+  /**
+   * STORED generated column from `data->'error'->>'code'`. Same null semantics
+   * as {@link outcome}.
+   */
+  errorCode: string | null;
+  /**
+   * STORED generated column: `NULLIF(BTRIM(data->>'severity'), '')` when migration
+   * V3+ is applied. See README for the documented ordinal scale.
+   */
+  severity: string | null;
 }
 
 /**
@@ -55,6 +71,23 @@ export interface AuditQueryFilters {
   correlationId?: string;
   requestId?: string;
   environment?: string;
+  /** Exact match on generated column `outcome` (from `data.outcome`). */
+  outcome?: string;
+  /** Exact match on generated column `error_code` (from `data.error.code`). */
+  errorCode?: string;
+  /** Exact match on generated column `severity` (from `data.severity`). */
+  severity?: string;
+  /**
+   * Exact match: `severity` must be one of the listed values (`OR` semantics
+   * via SQL `IN`).
+   */
+  severities?: readonly string[];
+  /**
+   * When `true`, keeps rows where `outcome = 'failure'` **or** `severity` is one
+   * of `error`, `critical`, `fatal` (see `SEVERITIES_FOR_ERRORS_ONLY_FILTER` on
+   * `tracevault/query`). Combined with other filters with `AND`.
+   */
+  errorsOnly?: boolean;
   mode?: AuditMode;
   /** Inclusive lower bound on `occurredAt`. Accepts Date or ISO string. */
   from?: Date | string;

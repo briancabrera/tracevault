@@ -19,8 +19,9 @@ npm install
 
 ```
 src/
-  core/           factory, validator, normalizer, masker, differ, queue, errors, serialization
+  core/           factory, validator, normalizer, masker, differ, queue, errors, serialization, schema, correlation
   drivers/        driver interface + PostgreSQL driver
+  query/          Read API (query.ts, builder, reader, validator, severity constants)
   types/          public types
   index.ts        public exports
 
@@ -28,9 +29,12 @@ tests/
   *.test.ts                       unit tests (no external deps)
   integration/*.integration.test.ts  real-DB integration tests
 
+CHANGELOG.md                      release notes
 sql/001_init_audit_logs.sql       initial migration
+sql/002_audit_logs_outcome_error_code.sql  generated outcome/error_code + indexes
+sql/003_audit_logs_severity.sql   generated severity + index
 docker/docker-compose.yml         PostgreSQL for integration tests
-scripts/apply-migration.mjs       waits for PG + applies migration
+scripts/apply-migration.mjs       waits for PG + applies 001 + 002 + 003 to audit_logs
 scripts/run-integration.mjs       up → migrate → test → down orchestrator
 scripts/smoke.mjs                 post-build consumption smoke test
 examples/express                  runnable Express demo
@@ -58,7 +62,9 @@ npm run test:integration
 
 A single command that spins up a PostgreSQL 16 Alpine container on port
 `5433` with `POSTGRES_DB=tracevault_test`, applies
-`sql/001_init_audit_logs.sql`, runs the `tests/integration/**` suite, and
+`sql/001_init_audit_logs.sql` and `sql/002_audit_logs_outcome_error_code.sql` and
+`sql/003_audit_logs_severity.sql`,
+runs the `tests/integration/**` suite, and
 tears everything down — even if the tests fail or the run is interrupted
 with Ctrl-C.
 

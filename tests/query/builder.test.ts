@@ -39,12 +39,15 @@ describe("query / builder — findMany", () => {
         requestId: "req",
         environment: "prod",
         mode: "async",
+        outcome: "failure",
+        errorCode: "E_AUTH",
+        severity: "warning",
         limit: 10,
         offset: 0,
       }),
     );
     expect(sql).toMatch(
-      /WHERE event = \$1 AND actor_id = \$2 AND actor_type = \$3 AND target_id = \$4 AND target_type = \$5 AND correlation_id = \$6 AND request_id = \$7 AND environment = \$8 AND mode = \$9 ORDER BY/,
+      /WHERE event = \$1 AND actor_id = \$2 AND actor_type = \$3 AND target_id = \$4 AND target_type = \$5 AND correlation_id = \$6 AND request_id = \$7 AND environment = \$8 AND mode = \$9 AND outcome = \$10 AND error_code = \$11 AND severity = \$12 ORDER BY/,
     );
     expect(params).toEqual([
       "user.updated",
@@ -56,9 +59,31 @@ describe("query / builder — findMany", () => {
       "req",
       "prod",
       "async",
+      "failure",
+      "E_AUTH",
+      "warning",
       10,
       0,
     ]);
+  });
+
+  it("severities expands to IN (...)", () => {
+    const { sql, params } = buildFindManySql(
+      "audit_logs",
+      normalize({ severities: ["error", "critical"], limit: 3 }),
+    );
+    expect(sql).toContain("severity IN ($1, $2)");
+    expect(sql).toMatch(/LIMIT \$3 OFFSET \$4$/);
+    expect(params).toEqual(["error", "critical", 3, 0]);
+  });
+
+  it("errorsOnly adds outcome failure or high-severity OR group", () => {
+    const { sql, params } = buildFindManySql(
+      "audit_logs",
+      normalize({ errorsOnly: true, limit: 5 }),
+    );
+    expect(sql).toContain("(outcome = $1 OR severity IN ($2, $3, $4))");
+    expect(params).toEqual(["failure", "error", "critical", "fatal", 5, 0]);
   });
 
   it("from/to append occurred_at bounds after equality filters", () => {

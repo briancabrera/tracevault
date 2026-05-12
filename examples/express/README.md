@@ -17,8 +17,10 @@ npm run build
 cd examples/express
 npm install
 
-# 3. Create the table in your database:
+# 3. Create the table in your database (run migrations in order):
 psql "$DATABASE_URL" -f ../../sql/001_init_audit_logs.sql
+psql "$DATABASE_URL" -f ../../sql/002_audit_logs_outcome_error_code.sql
+psql "$DATABASE_URL" -f ../../sql/003_audit_logs_severity.sql
 
 # 4. Run:
 DATABASE_URL=postgres://user:pass@localhost:5432/mydb npm run dev

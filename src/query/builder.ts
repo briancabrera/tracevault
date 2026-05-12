@@ -1,4 +1,5 @@
 import type { NormalizedQueryFilters } from "./validator.js";
+import { SEVERITIES_FOR_ERRORS_ONLY_FILTER } from "./severity.js";
 
 export interface BuiltQuery {
   sql: string;
@@ -8,7 +9,7 @@ export interface BuiltQuery {
 const SELECT_COLUMNS =
   'id, event, actor_id, actor_type, target_id, target_type, ' +
   'data, meta, mode, occurred_at, created_at, ' +
-  'correlation_id, request_id, environment';
+  'correlation_id, request_id, environment, outcome, error_code, severity';
 
 /**
  * Build the SELECT … WHERE … ORDER BY … LIMIT … OFFSET … used by `findMany`.
@@ -84,6 +85,31 @@ function buildWhere(
   if (filters.requestId !== null) push("request_id", filters.requestId);
   if (filters.environment !== null) push("environment", filters.environment);
   if (filters.mode !== null) push("mode", filters.mode);
+  if (filters.outcome !== null) push("outcome", filters.outcome);
+  if (filters.errorCode !== null) push("error_code", filters.errorCode);
+  if (filters.severity !== null) push("severity", filters.severity);
+
+  if (filters.severities !== null && filters.severities.length > 0) {
+    const start = params.length;
+    for (const v of filters.severities) {
+      params.push(v);
+    }
+    const placeholders = filters.severities.map((_, i) => `$${start + i + 1}`).join(", ");
+    conditions.push(`severity IN (${placeholders})`);
+  }
+
+  if (filters.errorsOnly) {
+    const idxOutcome = params.length + 1;
+    params.push("failure");
+    const idxIn0 = params.length + 1;
+    for (const s of SEVERITIES_FOR_ERRORS_ONLY_FILTER) {
+      params.push(s);
+    }
+    const placeholders = SEVERITIES_FOR_ERRORS_ONLY_FILTER.map(
+      (_, i) => `$${idxIn0 + i}`,
+    ).join(", ");
+    conditions.push(`(outcome = $${idxOutcome} OR severity IN (${placeholders}))`);
+  }
 
   if (filters.from !== null) {
     params.push(filters.from);

@@ -202,6 +202,9 @@ describe("createTracevaultQuery — query dispatch (mocked pool)", () => {
     try {
       await root.findMany();
       const call = queryCalls.at(-1)!;
+      expect(call.sql).toContain("outcome");
+      expect(call.sql).toContain("error_code");
+      expect(call.sql).toContain("severity");
       expect(call.sql).toContain("ORDER BY occurred_at DESC, id DESC");
       expect(call.params).toEqual([50, 0]);
     } finally {

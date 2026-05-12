@@ -8,6 +8,11 @@ export {
 export { computeDiff } from "./core/differ.js";
 export { mask, DEFAULT_MASK_VALUE } from "./core/masker.js";
 export { generateInitSql } from "./core/schema.js";
+export {
+  randomCorrelationId,
+  readCorrelationIdHeader,
+  resolveCorrelationId,
+} from "./core/correlation.js";
 
 export type {
   AuditActor,

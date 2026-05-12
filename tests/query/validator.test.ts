@@ -140,6 +140,11 @@ describe("query / validateAndNormalizeFilters", () => {
       correlationId: "cid",
       requestId: "rid",
       environment: "prod",
+      outcome: "failure",
+      errorCode: "E_1",
+      severity: "warning",
+      severities: ["a", "b"],
+      errorsOnly: true,
       mode: "async",
       from: "2026-01-01T00:00:00Z",
       to: new Date("2026-02-01T00:00:00Z"),
@@ -150,6 +155,11 @@ describe("query / validateAndNormalizeFilters", () => {
     expect(n.event).toBe("user.updated");
     expect(n.actorId).toBe("u1");
     expect(n.mode).toBe("async");
+    expect(n.outcome).toBe("failure");
+    expect(n.errorCode).toBe("E_1");
+    expect(n.severity).toBe("warning");
+    expect(n.severities).toEqual(["a", "b"]);
+    expect(n.errorsOnly).toBe(true);
     expect(n.from).toBeInstanceOf(Date);
     expect(n.to).toBeInstanceOf(Date);
     expect(n.from!.toISOString()).toBe("2026-01-01T00:00:00.000Z");
@@ -251,6 +261,22 @@ describe("query / validateAndNormalizeFilters", () => {
     expect(() =>
       validateAndNormalizeFilters({ order: "up" } as never),
     ).toThrow(/order/);
+  });
+
+  it("rejects non-boolean errorsOnly", () => {
+    expect(() =>
+      validateAndNormalizeFilters({ errorsOnly: "yes" } as never),
+    ).toThrow(/errorsOnly/);
+  });
+
+  it("rejects empty severities array", () => {
+    expect(() => validateAndNormalizeFilters({ severities: [] })).toThrow(/non-empty/);
+  });
+
+  it("rejects duplicate severities entries", () => {
+    expect(() =>
+      validateAndNormalizeFilters({ severities: ["x", "x"] }),
+    ).toThrow(/duplicate/);
   });
 });
 

@@ -25,6 +25,10 @@ export interface AuditTarget {
  *
  * `data` and `meta` are intentionally untyped by default so each project
  * can narrow them with its own generic arguments.
+ *
+ * **Optional convention (not enforced):** after DB migrations V2–V3, you may put
+ * `outcome`, `error: { code, ... }`, and `severity` inside `data` to populate
+ * generated columns for faster reads — see README.
  */
 export interface AuditEvent<
   TData extends Record<string, unknown> = Record<string, unknown>,

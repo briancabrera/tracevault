@@ -11,14 +11,23 @@ describe("generateInitSql", () => {
     expect(sql).toContain("data            JSONB");
     expect(sql).toContain("occurred_at     TIMESTAMPTZ NOT NULL");
     expect(sql).toContain("created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+    expect(sql).toContain("outcome         VARCHAR(64) GENERATED ALWAYS AS");
+    expect(sql).toContain("error_code      VARCHAR(255) GENERATED ALWAYS AS");
+    expect(sql).toContain("severity        VARCHAR(32) GENERATED ALWAYS AS");
     expect(sql).toContain('ON "audit_user_events" (event)');
     expect(sql).toContain('ON "audit_user_events" (actor_id, actor_type)');
     expect(sql).toContain('ON "audit_user_events" (target_id, target_type)');
     expect(sql).toContain('ON "audit_user_events" (occurred_at DESC)');
+    expect(sql).toContain('idx_audit_user_events_correlation_occurred_id');
+    expect(sql).toContain(
+      'ON "audit_user_events" (correlation_id, occurred_at DESC, id DESC)',
+    );
+    expect(sql).toContain("idx_audit_user_events_error_code_occurred");
+    expect(sql).toContain("idx_audit_user_events_outcome_occurred");
+    expect(sql).toContain("idx_audit_user_events_severity_occurred");
   });
 
-  it("reproduces the same schema as the shipped `audit_logs` migration", () => {
-    // Spot-check: the core column shapes match the pinned schema.
+  it("reproduces the consolidated schema for the default `audit_logs` name", () => {
     const sql = generateInitSql("audit_logs");
     const expected = [
       'CREATE TABLE IF NOT EXISTS "audit_logs"',
@@ -36,10 +45,17 @@ describe("generateInitSql", () => {
       "correlation_id  VARCHAR     NULL",
       "request_id      VARCHAR     NULL",
       "environment     VARCHAR     NULL",
+      "outcome         VARCHAR(64) GENERATED ALWAYS AS",
+      "error_code      VARCHAR(255) GENERATED ALWAYS AS",
+      "severity        VARCHAR(32) GENERATED ALWAYS AS",
       'CREATE INDEX IF NOT EXISTS idx_audit_logs_event        ON "audit_logs" (event)',
       'CREATE INDEX IF NOT EXISTS idx_audit_logs_actor        ON "audit_logs" (actor_id, actor_type)',
       'CREATE INDEX IF NOT EXISTS idx_audit_logs_target       ON "audit_logs" (target_id, target_type)',
       'CREATE INDEX IF NOT EXISTS idx_audit_logs_occurred_at  ON "audit_logs" (occurred_at DESC)',
+      "idx_audit_logs_correlation_occurred_id",
+      "idx_audit_logs_error_code_occurred",
+      "idx_audit_logs_outcome_occurred",
+      "idx_audit_logs_severity_occurred",
     ];
     for (const snippet of expected) {
       expect(sql).toContain(snippet);

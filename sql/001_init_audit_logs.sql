@@ -24,3 +24,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_event        ON "audit_logs" (event);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor        ON "audit_logs" (actor_id, actor_type);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_target       ON "audit_logs" (target_id, target_type);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_occurred_at  ON "audit_logs" (occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_correlation_occurred
+  ON "audit_logs" (correlation_id, occurred_at DESC)
+  WHERE correlation_id IS NOT NULL;

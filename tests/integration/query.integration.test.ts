@@ -152,6 +152,9 @@ describe("integration / query — basics", () => {
       expect(r.environment).toBe("prod");
       expect(r.occurredAt).toBeInstanceOf(Date);
       expect(r.createdAt).toBeInstanceOf(Date);
+      expect(r.outcome).toBeNull();
+      expect(r.errorCode).toBeNull();
+      expect(r.severity).toBeNull();
     } finally {
       await q.close();
     }
@@ -372,6 +375,106 @@ describe("integration / query — filter boundaries & semantics", () => {
       expect(row!.correlationId).toBeNull();
       expect(row!.requestId).toBeNull();
       expect(row!.environment).toBeNull();
+      expect(row!.outcome).toBeNull();
+      expect(row!.errorCode).toBeNull();
+      expect(row!.severity).toBeNull();
+    } finally {
+      await q.close();
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("integration / query — generated outcome & error_code columns", () => {
+  it("materializes data.outcome and data.error.code and supports Read API filters", async () => {
+    const audit = createTracevault({
+      driver: "postgres",
+      connectionString: CONN_STRING,
+      tableName: TABLE,
+    });
+    try {
+      await audit.emit({
+        event: "auth.login.failed",
+        data: {
+          outcome: "failure",
+          error: { code: "AUTH_INVALID_CREDENTIALS", stage: "credential_verify" },
+        },
+        correlationId: "corr-login-1",
+      });
+      await audit.emit({
+        event: "auth.login.succeeded",
+        data: { outcome: "success", tokenType: "bearer" },
+        correlationId: "corr-login-1",
+      });
+    } finally {
+      await audit.close();
+    }
+
+    const q = newQuery();
+    try {
+      const failures = await q.findMany({ errorCode: "AUTH_INVALID_CREDENTIALS" });
+      expect(failures).toHaveLength(1);
+      expect(failures[0]!.event).toBe("auth.login.failed");
+      expect(failures[0]!.outcome).toBe("failure");
+      expect(failures[0]!.errorCode).toBe("AUTH_INVALID_CREDENTIALS");
+
+      const wins = await q.findMany({ outcome: "success", event: "auth.login.succeeded" });
+      expect(wins).toHaveLength(1);
+      expect(wins[0]!.errorCode).toBeNull();
+
+      expect(await q.count({ outcome: "failure" })).toBe(1);
+      expect(await q.count({ correlationId: "corr-login-1" })).toBe(2);
+    } finally {
+      await q.close();
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("integration / query — severity & errorsOnly", () => {
+  it("exposes data.severity, severities filter, and errorsOnly shorthand", async () => {
+    const audit = createTracevault({
+      driver: "postgres",
+      connectionString: CONN_STRING,
+      tableName: TABLE,
+    });
+    try {
+      await audit.emit({
+        event: "app.info",
+        data: { severity: "info", msg: "started" },
+        correlationId: "op-1",
+      });
+      await audit.emit({
+        event: "auth.login.failed",
+        data: {
+          outcome: "failure",
+          severity: "warning",
+          error: { code: "AUTH_X" },
+        },
+        correlationId: "op-1",
+      });
+      await audit.emit({
+        event: "db.unreachable",
+        data: { severity: "critical", outcome: "success" },
+        correlationId: "op-1",
+      });
+    } finally {
+      await audit.close();
+    }
+
+    const q = newQuery();
+    try {
+      expect((await q.findMany({ severity: "info" })).map((r) => r.event)).toEqual([
+        "app.info",
+      ]);
+
+      const warnOrErr = await q.findMany({ severities: ["warning", "error"] });
+      expect(warnOrErr.map((r) => r.event).sort()).toEqual(["auth.login.failed"]);
+
+      const errOnly = await q.findMany({ errorsOnly: true });
+      expect(errOnly.map((r) => r.event).sort()).toEqual(["auth.login.failed", "db.unreachable"]);
+
+      expect(await q.count({ errorsOnly: true, correlationId: "op-1" })).toBe(2);
     } finally {
       await q.close();
     }
@@ -695,6 +798,9 @@ describe("integration / query — write ↔ read shape equivalence", () => {
         requestId: "req-xyz",
         environment: "prod",
         mode: "sync",
+        outcome: null,
+        errorCode: null,
+        severity: null,
       });
       expect(row!.occurredAt.getTime()).toBe(occurredAt.getTime());
       expect(row!.createdAt).toBeInstanceOf(Date);

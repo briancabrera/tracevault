@@ -17,6 +17,12 @@ export type {
   TracevaultQueryScopeOverrides,
 } from "./types.js";
 
+export {
+  DOCUMENTED_SEVERITY_LEVELS,
+  SEVERITIES_FOR_ERRORS_ONLY_FILTER,
+} from "./severity.js";
+export type { DocumentedSeverity } from "./severity.js";
+
 // Re-export the shared error hierarchy so consumers of the query entry
 // point can `catch (err) { if (err instanceof ValidationError) ... }`
 // without also importing the write entry.
