@@ -1,6 +1,6 @@
 import pg from "pg";
 
-import { createTracevault } from "../../src/index.js";
+import { createTracevault } from "../../src/core/tracevault.js";
 import type { Tracevault, TracevaultConfig } from "../../src/types/index.js";
 
 const { Client } = pg;

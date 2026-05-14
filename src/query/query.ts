@@ -57,21 +57,27 @@ function mergeOverrides(
 }
 
 /**
- * Create a Tracevault Read API instance.
+ * Create a read-side Tracevault instance (internal building block).
  *
- * Mirrors the write API's lifecycle exactly: the factory owns a `pg.Pool`,
- * derived `scope()` instances share the pool, and `root.close()` tears
- * everything down atomically.
+ * Used by `startTracevault` for the read pool.
  */
 export function createTracevaultQuery(config: TracevaultQueryConfig): TracevaultQuery {
   validateQueryConfig(config);
 
-  const pool = new Pool({ connectionString: config.connectionString });
-  // Mirror the write side: swallow idle-client `error` events so they don't
-  // crash the process; per-query errors still surface through reader calls.
-  pool.on("error", () => {
-    /* swallow */
-  });
+  const pool =
+    config.pool ??
+    new Pool({
+      connectionString: config.connectionString,
+    });
+  if (!config.pool) {
+    pool.on("error", () => {
+      /* swallow */
+    });
+  } else {
+    pool.on("error", () => {
+      /* swallow */
+    });
+  }
 
   const runtime: SharedRuntime = {
     pool,

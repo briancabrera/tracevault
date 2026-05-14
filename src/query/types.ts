@@ -7,6 +7,8 @@
  * projects need analytics, they should build those on top of SQL directly.
  */
 
+import type { Pool } from "pg";
+
 import type { AuditDriver, AuditMode } from "../types/index.js";
 
 /**
@@ -83,9 +85,9 @@ export interface AuditQueryFilters {
    */
   severities?: readonly string[];
   /**
-   * When `true`, keeps rows where `outcome = 'failure'` **or** `severity` is one
-   * of `error`, `critical`, `fatal` (see `SEVERITIES_FOR_ERRORS_ONLY_FILTER` on
-   * `tracevault/query`). Combined with other filters with `AND`.
+ * When `true`, keeps rows where `outcome = 'failure'` **or** `severity` is one
+ * of `error`, `critical`, `fatal` (see `SEVERITIES_FOR_ERRORS_ONLY_FILTER` on
+ * the main package export).
    */
   errorsOnly?: boolean;
   mode?: AuditMode;
@@ -104,10 +106,15 @@ export interface AuditQueryFilters {
 /** Filters accepted by `count`. Pagination/order fields are not meaningful here. */
 export type AuditCountFilters = Omit<AuditQueryFilters, "limit" | "offset" | "order">;
 
-/** Configuration passed to `createTracevaultQuery`. */
+/** Configuration for the internal read-side factory. */
 export interface TracevaultQueryConfig {
   driver: AuditDriver;
   connectionString: string;
+  /**
+   * When set, the read API uses this pool instead of creating one from
+   * `connectionString`.
+   */
+  pool?: Pool;
   tableName?: string;
 }
 
@@ -123,7 +130,7 @@ export interface TracevaultQueryScopeOverrides {
 }
 
 /**
- * Public read-only Tracevault instance returned by `createTracevaultQuery`.
+ * Read-only query surface (internal; exposed on `TracevaultApp.query`).
  */
 export interface TracevaultQuery {
   /**

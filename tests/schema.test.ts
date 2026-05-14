@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { generateInitSql } from "../src/index.js";
+import { generateInitSql } from "../src/core/schema.js";
 import { ConfigError } from "../src/core/errors.js";
 
 describe("generateInitSql", () => {

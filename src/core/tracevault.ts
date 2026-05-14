@@ -98,22 +98,29 @@ function mergeOverrides(
 }
 
 /**
- * Create a Tracevault instance.
+ * Create a write-side Tracevault instance (internal building block).
  *
- * This factory is the only public entry point developers interact with.
- * It returns an object with the minimum API needed to emit custom events,
- * plus `scope()` to derive additional instances that share the same
- * connection pool but write to different tables.
+ * Applications should use `startTracevault` from the package entry.
  */
 export function createTracevault(config: TracevaultConfig): Tracevault {
   validateConfig(config);
 
-  const pool = new Pool({ connectionString: config.connectionString });
-  // Prevent unhandled 'error' events (pg emits them on idle client failures)
-  // from crashing the process. Per-query errors still surface via `insert()`.
-  pool.on("error", () => {
-    /* swallow; per-query errors still propagate through driver.insert() */
-  });
+  const pool =
+    config.pool ??
+    new Pool({
+      connectionString: config.connectionString,
+    });
+  if (!config.pool) {
+    // Prevent unhandled 'error' events (pg emits them on idle client failures)
+    // from crashing the process. Per-query errors still surface via `insert()`.
+    pool.on("error", () => {
+      /* swallow; per-query errors still propagate through driver.insert() */
+    });
+  } else {
+    pool.on("error", () => {
+      /* swallow */
+    });
+  }
 
   const runtime: SharedRuntime = {
     pool,

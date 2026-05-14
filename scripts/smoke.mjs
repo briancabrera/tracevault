@@ -3,9 +3,8 @@
  * Smoke test for the built package.
  *
  * Verifies that `dist/` exposes the documented public API through both the
- * CJS and ESM entry points, that type declaration files exist on both sides,
- * and that a minimal Tracevault instance can be created and closed without
- * touching the network.
+ * CJS and ESM entry points, that type declaration files exist, and that
+ * `startTracevault` can be constructed and closed without touching the network.
  *
  * Run with `npm run smoke` (which builds first).
  */
@@ -18,13 +17,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(__dirname, "..", "dist");
 
 const EXPECTED_FUNCTIONS = [
-  "createTracevault",
+  "startTracevault",
   "computeDiff",
   "mask",
   "generateInitSql",
   "randomCorrelationId",
   "readCorrelationIdHeader",
   "resolveCorrelationId",
+  "assertValidScopeName",
+  "assertValidTableName",
 ];
 const EXPECTED_ERROR_CLASSES = [
   "TracevaultError",
@@ -33,18 +34,7 @@ const EXPECTED_ERROR_CLASSES = [
   "DriverError",
 ];
 const EXPECTED_CONSTANTS = ["DEFAULT_MASK_VALUE"];
-const EXPECTED_DIST_FILES = [
-  "index.js",
-  "index.mjs",
-  "index.d.ts",
-  "index.d.mts",
-  "query.js",
-  "query.mjs",
-  "query.d.ts",
-  "query.d.mts",
-];
-
-const EXPECTED_QUERY_FUNCTIONS = ["createTracevaultQuery"];
+const EXPECTED_DIST_FILES = ["index.js", "index.mjs", "index.d.ts", "index.d.mts"];
 
 function fail(msg) {
   console.error(`[smoke] FAIL: ${msg}`);
@@ -81,29 +71,41 @@ function assertExports(moduleName, mod) {
   }
 }
 
-async function createAndCloseInstance(createTracevault) {
-  const audit = createTracevault({
+async function createAndCloseStartTracevault(startTracevault) {
+  const tv = await startTracevault({
     driver: "postgres",
     connectionString: "postgres://smoke:smoke@127.0.0.1:1/smoke",
+    defaultScope: "default",
+    scopes: {
+      default: { tableName: "audit_smoke_default" },
+      other: { tableName: "audit_smoke_other" },
+    },
+    bootstrap: { ensureSchema: false },
     defaultMode: "sync",
     maskFields: ["password"],
   });
 
-  for (const method of ["emit", "emitDiff", "flush", "close", "healthcheck", "scope"]) {
-    if (typeof audit[method] !== "function") {
-      fail(`Tracevault instance is missing method \`${method}\`.`);
+  for (const method of ["emit", "emitDiff", "flush", "close", "healthcheck", "getScope"]) {
+    if (typeof tv[method] !== "function") {
+      fail(`TracevaultApp is missing method \`${method}\`.`);
     }
   }
+  if (typeof tv.query?.findMany !== "function") {
+    fail("TracevaultApp.query.findMany is missing.");
+  }
 
-  const scoped = audit.scope({ tableName: "audit_smoke_scope" });
-  for (const method of ["emit", "emitDiff", "flush", "close", "healthcheck", "scope"]) {
+  const scoped = tv.getScope("other");
+  for (const method of ["emit", "emitDiff", "flush"]) {
     if (typeof scoped[method] !== "function") {
-      fail(`Scope Tracevault instance is missing method \`${method}\`.`);
+      fail(`Scope handle is missing method \`${method}\`.`);
     }
   }
+  if (typeof scoped.query?.findMany !== "function") {
+    fail("Scope handle query.findMany is missing.");
+  }
 
-  await audit.close();
-  await audit.close();
+  await tv.close();
+  await tv.close();
 }
 
 function assertGenerateInitSql(moduleName, mod) {
@@ -126,76 +128,14 @@ function assertGenerateInitSql(moduleName, mod) {
   }
 }
 
-function assertQueryExports(moduleName, mod) {
-  for (const name of EXPECTED_QUERY_FUNCTIONS) {
-    if (typeof mod[name] !== "function") {
-      fail(`${moduleName}: expected \`${name}\` to be a function, got ${typeof mod[name]}.`);
-    }
-  }
-  for (const name of EXPECTED_ERROR_CLASSES) {
-    if (typeof mod[name] !== "function") {
-      fail(`${moduleName}: expected error class \`${name}\` to be re-exported.`);
-    }
-  }
-}
-
-async function createAndCloseQueryInstance(createTracevaultQuery) {
-  const q = createTracevaultQuery({
-    driver: "postgres",
-    connectionString: "postgres://smoke:smoke@127.0.0.1:1/smoke",
-    tableName: "audit_smoke_read",
-  });
-
-  for (const method of [
-    "findMany",
-    "findById",
-    "count",
-    "scope",
-    "close",
-    "healthcheck",
-  ]) {
-    if (typeof q[method] !== "function") {
-      fail(`TracevaultQuery instance is missing method \`${method}\`.`);
-    }
-  }
-
-  const scoped = q.scope({ tableName: "audit_smoke_read_scope" });
-  for (const method of ["findMany", "findById", "count", "scope", "close", "healthcheck"]) {
-    if (typeof scoped[method] !== "function") {
-      fail(`Scoped TracevaultQuery instance is missing method \`${method}\`.`);
-    }
-  }
-
-  await q.close();
-  await q.close();
-}
-
-async function assertQueryValidation(createTracevaultQuery, ValidationError) {
-  // Validation runs before any DB round-trip, so we can exercise the whole
-  // input pipeline without a reachable pool.
-  const q = createTracevaultQuery({
-    driver: "postgres",
-    connectionString: "postgres://smoke:smoke@127.0.0.1:1/smoke",
-  });
+async function assertScopeNameValidation(mod) {
   try {
-    try {
-      await q.findById("not-a-uuid");
-      fail("Expected ValidationError from findById('not-a-uuid').");
-    } catch (err) {
-      if (!(err instanceof ValidationError)) {
-        fail(`Expected ValidationError from findById, got ${err?.name ?? typeof err}.`);
-      }
+    mod.assertValidScopeName("0bad", "smoke");
+    fail("Expected ConfigError from assertValidScopeName.");
+  } catch (err) {
+    if (!(err instanceof mod.ConfigError)) {
+      fail(`Expected ConfigError from assertValidScopeName, got ${err?.name ?? typeof err}.`);
     }
-    try {
-      await q.findMany({ limit: 99999 });
-      fail("Expected ValidationError from findMany({ limit: 99999 }).");
-    } catch (err) {
-      if (!(err instanceof ValidationError)) {
-        fail(`Expected ValidationError from findMany, got ${err?.name ?? typeof err}.`);
-      }
-    }
-  } finally {
-    await q.close();
   }
 }
 
@@ -215,27 +155,23 @@ async function main() {
     );
   }
 
-  await createAndCloseInstance(cjs.createTracevault);
-  await createAndCloseInstance(esm.createTracevault);
+  await createAndCloseStartTracevault(cjs.startTracevault);
+  await createAndCloseStartTracevault(esm.startTracevault);
 
   assertGenerateInitSql("CJS (dist/index.js)", cjs);
   assertGenerateInitSql("ESM (dist/index.mjs)", esm);
 
-  // Read API: separate subpath exports.
-  const queryCjs = require(resolve(distDir, "query.js"));
-  assertQueryExports("CJS (dist/query.js)", queryCjs);
-
-  const queryEsm = await import(pathToFileURL(resolve(distDir, "query.mjs")).href);
-  assertQueryExports("ESM (dist/query.mjs)", queryEsm);
-
-  await createAndCloseQueryInstance(queryCjs.createTracevaultQuery);
-  await createAndCloseQueryInstance(queryEsm.createTracevaultQuery);
-
-  await assertQueryValidation(queryCjs.createTracevaultQuery, queryCjs.ValidationError);
-  await assertQueryValidation(queryEsm.createTracevaultQuery, queryEsm.ValidationError);
+  await assertScopeNameValidation(cjs);
+  await assertScopeNameValidation(esm);
 
   try {
-    cjs.createTracevault({ driver: "mysql", connectionString: "x" });
+    await cjs.startTracevault({
+      driver: "mysql",
+      connectionString: "postgres://x",
+      defaultScope: "default",
+      scopes: { default: { tableName: "audit_x" } },
+      bootstrap: { ensureSchema: false },
+    });
     fail("Expected ConfigError for unsupported driver, but none was thrown.");
   } catch (err) {
     if (!(err instanceof cjs.ConfigError)) {
@@ -243,20 +179,7 @@ async function main() {
     }
   }
 
-  try {
-    queryCjs.createTracevaultQuery({ driver: "mysql", connectionString: "x" });
-    fail("Expected ConfigError for unsupported query driver, but none was thrown.");
-  } catch (err) {
-    if (!(err instanceof queryCjs.ConfigError)) {
-      fail(
-        `Expected ConfigError from query factory, got ${err?.name ?? typeof err}.`,
-      );
-    }
-  }
-
-  console.log(
-    "[smoke] OK — write & read CJS/ESM exports, lifecycle, and error classes look healthy.",
-  );
+  console.log("[smoke] OK — CJS/ESM exports, startTracevault lifecycle, and helpers look healthy.");
 }
 
 main().catch((err) => {

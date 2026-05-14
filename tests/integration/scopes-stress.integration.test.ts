@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 
-import { createTracevault, generateInitSql } from "../../src/index.js";
+import { createTracevault } from "../../src/core/tracevault.js";
+import { generateInitSql } from "../../src/core/schema.js";
 import { CONN_STRING, createDbClient, selectAll, truncate } from "./helpers.js";
 
 // A dedicated pool of tables for stress tests. We use many to exercise the

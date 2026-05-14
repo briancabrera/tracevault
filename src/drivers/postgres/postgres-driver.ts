@@ -69,7 +69,7 @@ export class PostgresDriver implements AuditDriverClient {
 
   /**
    * Marks the driver as closed. The underlying pool is intentionally NOT
-   * released here: the root Tracevault owns the pool lifecycle (see
+   * released here: the root write-side instance owns the pool lifecycle (see
    * `createTracevault` in `src/core/tracevault.ts`).
    */
   async close(): Promise<void> {

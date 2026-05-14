@@ -21,7 +21,7 @@ npm install
 src/
   core/           factory, validator, normalizer, masker, differ, queue, errors, serialization, schema, correlation
   drivers/        driver interface + PostgreSQL driver
-  query/          Read API (query.ts, builder, reader, validator, severity constants)
+  query/          Read API (used by startTracevault; query.ts, builder, reader, validator, severity)
   types/          public types
   index.ts        public exports
 

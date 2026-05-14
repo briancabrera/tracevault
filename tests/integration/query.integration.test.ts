@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 
-import { createTracevault, generateInitSql } from "../../src/index.js";
-import { createTracevaultQuery } from "../../src/query/index.js";
+import { createTracevault } from "../../src/core/tracevault.js";
+import { generateInitSql } from "../../src/core/schema.js";
+import { createTracevaultQuery } from "../../src/query/query.js";
 import {
   DriverError,
   TracevaultError,

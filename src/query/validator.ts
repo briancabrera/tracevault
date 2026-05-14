@@ -97,14 +97,19 @@ export function validateQueryConfig(config: TracevaultQueryConfig): void {
 
   if (!VALID_DRIVERS.has(config.driver)) {
     throw new ConfigError(
-      `Tracevault query config: unsupported driver "${config.driver}". V1 only supports "postgres".`,
+      `Tracevault query config: unsupported driver "${config.driver}". Only "postgres" is supported.`,
     );
   }
 
-  if (
-    typeof config.connectionString !== "string" ||
-    config.connectionString.trim().length === 0
-  ) {
+  if (config.pool !== undefined && config.pool !== null) {
+    if (typeof config.pool !== "object" || typeof (config.pool as { query?: unknown }).query !== "function") {
+      throw new ConfigError(
+        "Tracevault query config: `pool` must be a pg.Pool with a `.query` method.",
+      );
+    }
+  }
+
+  if (typeof config.connectionString !== "string" || config.connectionString.trim().length === 0) {
     throw new ConfigError(
       "Tracevault query config: `connectionString` is required and must be a non-empty string.",
     );

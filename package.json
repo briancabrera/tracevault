@@ -1,7 +1,7 @@
 {
   "name": "tracevault",
-  "version": "0.4.0",
-  "description": "Lightweight audit event library for Node.js. Define your own events, persist them consistently in PostgreSQL.",
+  "version": "1.0.0",
+  "description": "Lightweight audit events for Node.js: startTracevault for PostgreSQL with named scopes, integrated read API, and strict validation.",
   "keywords": [
     "audit",
     "audit-log",
@@ -42,16 +42,6 @@
       "require": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
-      }
-    },
-    "./query": {
-      "import": {
-        "types": "./dist/query.d.mts",
-        "default": "./dist/query.mjs"
-      },
-      "require": {
-        "types": "./dist/query.d.ts",
-        "default": "./dist/query.js"
       }
     },
     "./package.json": "./package.json"

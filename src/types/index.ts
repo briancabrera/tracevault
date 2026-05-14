@@ -6,6 +6,8 @@
  * else is optional and free-form.
  */
 
+import type { Pool } from "pg";
+
 export type AuditMode = "sync" | "async";
 
 export type AuditDriver = "postgres";
@@ -80,11 +82,17 @@ export interface DiffEntry {
 export type Diff = Record<string, DiffEntry>;
 
 /**
- * Configuration passed to `createTracevault`.
+ * Configuration for the internal write-side factory (used by `startTracevault`).
  */
 export interface TracevaultConfig {
   driver: AuditDriver;
   connectionString: string;
+  /**
+   * When set, Tracevault uses this pool instead of creating one from
+   * `connectionString`. The string is still required for configuration
+   * validation and documentation.
+   */
+  pool?: Pool;
   tableName?: string;
   maskFields?: readonly string[];
   maskValue?: string;
@@ -148,7 +156,7 @@ export interface TracevaultScopeOverrides {
 }
 
 /**
- * Public Tracevault instance returned by `createTracevault`.
+ * Internal write-side instance shape (composed by `startTracevault`).
  */
 export interface Tracevault {
   emit(event: AuditEvent): Promise<void>;
@@ -171,4 +179,41 @@ export interface Tracevault {
    * `TracevaultScopeOverrides` may be changed.
    */
   scope(overrides?: TracevaultScopeOverrides): Tracevault;
+}
+
+/** Physical table for a logical scope name (used with `startTracevault`). */
+export interface TracevaultScopeTableConfig {
+  tableName: string;
+}
+
+/** Map of logical scope name → physical audit table. */
+export type TracevaultScopesMap = Record<string, TracevaultScopeTableConfig>;
+
+/** Bootstrap behaviour for `startTracevault`. */
+export interface StartTracevaultBootstrap {
+  /**
+   * When not `false`, runs idempotent DDL for each distinct table in `scopes`
+   * using the write connection. Default: ensure schema at startup.
+   */
+  ensureSchema?: boolean;
+}
+
+/** Options passed to {@link startTracevault}. */
+export interface StartTracevaultOptions {
+  driver: AuditDriver;
+  /** Write role (`INSERT`, and DDL when `bootstrap.ensureSchema` is enabled). */
+  connectionString: string;
+  /** Read-only role for the Read API. Defaults to `connectionString` (single role). */
+  readConnectionString?: string;
+  /** Must be a key of `scopes`. */
+  defaultScope: string;
+  scopes: TracevaultScopesMap;
+  bootstrap?: StartTracevaultBootstrap;
+  defaultMode?: AuditMode;
+  environment?: string;
+  maskFields?: readonly string[];
+  maskValue?: string;
+  onError?: (error: Error, record: PersistedRecord) => void;
+  asyncBatchSize?: number;
+  asyncFlushIntervalMs?: number;
 }

@@ -34,7 +34,7 @@ interface RawRow {
  * Read-side counterpart of `PostgresDriver`. Wraps a shared `pg.Pool` and
  * executes the prebuilt SELECT / COUNT queries produced by `builder.ts`.
  *
- * The reader does NOT own the pool — `createTracevaultQuery` creates and
+ * The reader does NOT own the pool — the read-side factory creates and
  * tears it down, and scopes reuse it.
  */
 export class PostgresReader {

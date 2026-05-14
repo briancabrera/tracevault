@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-05-14
+
+### Added
+
+- **`startTracevault`**: single application entry point — optional idempotent DDL (`bootstrap.ensureSchema`), named `scopes`, separate **write** and **read** `pg.Pool`s (`readConnectionString` optional; defaults to the write URL for local use), integrated **`query`** (`findMany`, `findById`, `count`) on the app and on each `getScope(name)` handle.
+- **`audit-ddl`**: shared DDL statements used by `generateInitSql` and runtime bootstrap.
+- **`assertValidScopeName`** and **`validateStartTracevaultOptions`**.
+
+### Changed
+
+- **Public API** is now centered on `startTracevault` / `TracevaultApp`. Types and helpers that previously lived only under `tracevault/query` (`AuditRecord`, `TracevaultQuery`, severity constants, …) are re-exported from the main **`tracevault`** entry.
+
+### Removed
+
+- **`createTracevault`**, **`createTracevaultQuery`**, and the **`tracevault/query`** package subpath — they are no longer part of the supported public surface (internal modules may still use the underlying factories for tests).
+
+### Migration from 0.4.x
+
+1. Replace `createTracevault` + `createTracevaultQuery` with one `await startTracevault({ connectionString, readConnectionString?, defaultScope, scopes, … })`.
+2. Replace `root.scope({ tableName })` with `getScope("logicalName")` and declare the mapping in `scopes`.
+3. Replace `query.*` imports with `app.query` or `app.getScope("x").query`.
+4. Either rely on `bootstrap.ensureSchema` or keep applying `sql/` / `generateInitSql` yourself (`ensureSchema: false`).
+
 ## [0.4.0] - 2026-05-12
 
 ### Added

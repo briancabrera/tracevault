@@ -48,11 +48,11 @@ normalization, and persistence.
 - **Recursive, cycle-safe masking** for sensitive fields (`password`, `token`, …).
 - **Sync** persistence (write-through) or **async** persistence (in-process queue).
 - **PostgreSQL** driver with `JSONB`-first, event-oriented schema.
-- **Multi-table audits via `scope()`** — one pool, many tables, one API.
-- **Narrow Read API** (`tracevault/query`) — equality filters (including
+- **Multi-table audits** — logical scope names map to physical tables; `getScope("users")` shares the same write/read pools as the root.
+- **Narrow Read API** on the same app object (`audit.query`) — equality filters (including
   generated `outcome` / `errorCode` / `severity`), `errorsOnly` shorthand,
-  `severities` list filter, time windows, deterministic pagination, per-table
-  scopes. No DSL, no magic.
+  `severities` list filter, time windows, deterministic pagination, per-scope
+  readers. No DSL, no magic.
 - **Correlation helpers** — `randomCorrelationId`, `readCorrelationIdHeader`,
   `resolveCorrelationId` for consistent `correlationId` on emits.
 - **Optional generated columns** (PostgreSQL migrations **002**–**003**) —
@@ -67,10 +67,11 @@ normalization, and persistence.
 npm install tracevault pg
 ```
 
-### Run the initial migration **manually**
+### Database schema
 
-> Tracevault **does not** create the `audit_logs` table for you at boot.
-> Run the migration explicitly, as part of your normal DB migration flow.
+By default, **`startTracevault`** runs idempotent DDL for every physical table listed in `scopes` (same shape as `generateInitSql`). Set `bootstrap: { ensureSchema: false }` if your migrations own the schema.
+
+You can still apply SQL manually:
 
 ```bash
 psql "$DATABASE_URL" -f node_modules/tracevault/sql/001_init_audit_logs.sql
@@ -90,12 +91,18 @@ adds optional STORED generated columns `outcome` and `error_code` (derived from
 ## Quick start
 
 ```ts
-import { createTracevault } from "tracevault";
+import { startTracevault } from "tracevault";
 
-const audit = createTracevault({
+const audit = await startTracevault({
   driver: "postgres",
-  connectionString: process.env.DATABASE_URL ?? "",
-  tableName: "audit_logs",
+  connectionString: process.env.DATABASE_URL_WRITE!,
+  readConnectionString: process.env.DATABASE_URL_READ,
+  defaultScope: "default",
+  scopes: {
+    default: { tableName: "audit_logs" },
+    users: { tableName: "audit_user_events" },
+  },
+  bootstrap: { ensureSchema: true },
   maskFields: ["password", "token", "pin", "biometricData"],
   defaultMode: "sync",
   environment: process.env.NODE_ENV,
@@ -103,10 +110,19 @@ const audit = createTracevault({
 
 await audit.emit({
   event: "auth.login.succeeded",
-  actor:  { id: "user_123", type: "user" },
-  meta:   { ip: "127.0.0.1", userAgent: "curl/8" },
+  actor: { id: "user_123", type: "user" },
+  meta: { ip: "127.0.0.1", userAgent: "curl/8" },
 });
+
+const userRows = await audit.getScope("users").query.findMany({
+  event: "user.profile.updated",
+  limit: 20,
+});
+
+await audit.close();
 ```
+
+Use **`readConnectionString`** with a PostgreSQL role that has only `SELECT` on the audit tables; the write URL should carry `INSERT` (and DDL if `ensureSchema` is enabled).
 
 ### `emit`
 
@@ -168,142 +184,41 @@ Notes on the diff shape:
 - Nested objects are compared structurally for equality; when they differ, the
   whole subtree is emitted as one diff entry (no path flattening).
 
-## Multi-table audits with scopes
+## Named scopes
 
-One `createTracevault(...)` owns a single `pg.Pool`. From that root you can derive
-as many **scopes** as you want — each writing to its own table — via `root.scope(...)`:
+Logical keys in `scopes` map to physical `tableName` values once at startup. Use **`getScope("users")`** for writes and **`getScope("users").query`** for reads. The default scope (`defaultScope`) is what `audit.emit` / `audit.query` use.
 
-```ts
-const root = createTracevault({
-  driver: "postgres",
-  connectionString: process.env.DATABASE_URL ?? "",
-  tableName: "audit_logs",
-  maskFields: ["password", "token", "pin", "biometricData"],
-  defaultMode: "sync",
-  environment: process.env.NODE_ENV,
-});
+Each non-default scope has its **own async queue** on the write path. **`close()`** on the app drains every queue and shuts down **both** pools.
 
-const userAudit = root.scope({ tableName: "audit_user_events" });
-const txAudit   = root.scope({ tableName: "audit_transaction_events", defaultMode: "sync" });
+### `generateInitSql` (operators / CI)
 
-await userAudit.emit({
-  event: "user.profile.updated",
-  actor:  { id: "user_123", type: "user" },
-  target: { id: "user_123", type: "user" },
-  data:   { field: "phone" },
-});
+`generateInitSql(tableName)` returns the same DDL `startTracevault` runs when `bootstrap.ensureSchema` is not `false`. It does **not** execute SQL.
 
-await txAudit.emit({
-  event: "payment.intent.created",
-  actor:  { id: "merchant_42", type: "merchant" },
-  target: { id: "payment_987", type: "payment" },
-  data:   { amount: 1200, currency: "UYU" },
-});
-```
-
-Scopes are explicit by design:
-
-- **Tables are chosen when you create the scope**, never per-event. `emit()` and
-  `emitDiff()` intentionally ignore any `tableName` in the payload — it would
-  just be another stringly-typed routing mechanism.
-- **There is no event-name-based routing.** If an event should land in a
-  different table, use a different scope.
-- **Scopes share the root's connection pool.** No extra connections, no extra
-  lifecycle to manage.
-
-### What scopes inherit and what they can override
-
-A scope inherits *every* setting from its parent (the root, or another scope).
-Only the following fields may be overridden:
-
-| Override                | Effect                                                              |
-| ----------------------- | ------------------------------------------------------------------- |
-| `tableName`             | Write to a different audit table.                                   |
-| `defaultMode`           | Switch the scope's default `sync`/`async` behavior.                 |
-| `environment`           | Stamp a different `environment` on the scope's events.              |
-| `maskFields`            | Replace (not merge) the set of sensitive field names.               |
-| `maskValue`             | Replace the masking placeholder.                                    |
-| `onError`               | Route this scope's async failures to a different handler.           |
-| `asyncBatchSize`        | Tune the scope's async batch size.                                  |
-| `asyncFlushIntervalMs`  | Tune the scope's async flush cadence.                               |
-
-`driver` and `connectionString` are **not** overridable — trying to do so
-throws `ConfigError` with a clear message.
-
-Every other key also throws `ConfigError`. There is no implicit passthrough.
-
-### Queues are per-scope
-
-Each scope maintains its **own** async queue. That means:
-
-- `scope.flush()` drains only that scope's buffered events.
-- `scope.close()` flushes and tears down that scope's queue — the shared pool
-  and all other scopes keep working.
-- A scope's `onError` only receives failures from its own inserts.
-
-### `close()` semantics
-
-| Call                | What it does                                                                 |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `scope.close()`     | Drains this scope's queue, marks it unusable. The root pool is untouched.    |
-| `root.close()`      | Drains the root's queue, drains every live scope's queue, then releases the pool. Every scope then rejects `emit()` / `emitDiff()` and reports `healthcheck() === false`. |
-
-`close()` is idempotent on both the root and each scope. Creating a new scope
-(`root.scope(...)`) after the root is closed throws `TracevaultError`.
-
-### Migrating several tables — `generateInitSql`
-
-Tracevault does not auto-create tables at boot. For the default `audit_logs`
-table, apply **all** shipped migrations in order:
-
-```bash
-psql "$DATABASE_URL" -f node_modules/tracevault/sql/001_init_audit_logs.sql
-psql "$DATABASE_URL" -f node_modules/tracevault/sql/002_audit_logs_outcome_error_code.sql
-psql "$DATABASE_URL" -f node_modules/tracevault/sql/003_audit_logs_severity.sql
-```
-
-For additional tables used by scopes, generate the DDL with `generateInitSql`
-(which already matches **001 + 002 + 003** for that table name) and pipe it through
-whatever migration tool you already use:
-
-```ts
-import { generateInitSql } from "tracevault";
-
-// Same schema as audit_logs, but for a different table.
-const ddl = generateInitSql("audit_user_events");
-console.log(ddl);
-// -> CREATE TABLE IF NOT EXISTS "audit_user_events" ( … ); CREATE INDEX …
-```
-
-Or straight from the shell:
+- Validates the table name (`/^[A-Za-z_][A-Za-z0-9_]*$/`, max 63 chars); invalid names throw `ConfigError`.
+- Safe to run repeatedly (`IF NOT EXISTS`).
 
 ```bash
 node -e 'console.log(require("tracevault").generateInitSql("audit_user_events"))' \
   | psql "$DATABASE_URL"
 ```
 
-`generateInitSql`:
+## Configuration (`startTracevault`)
 
-- Validates the table name with the same strict policy as `tableName`
-  (`/^[A-Za-z_][A-Za-z0-9_]*$/`, max 63 chars); invalid names throw `ConfigError`.
-- **Never executes anything.** It only returns a string.
-- Uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`, so it is
-  safe to run repeatedly.
-
-## Configuration
-
-| Option                 | Type                        | Default        | Notes                                                              |
-| ---------------------- | --------------------------- | -------------- | ------------------------------------------------------------------ |
-| `driver`               | `"postgres"`                | —              | Only `"postgres"` is supported in V1.                              |
-| `connectionString`     | `string`                    | —              | Standard `pg` connection string.                                   |
-| `tableName`            | `string`                    | `"audit_logs"` | `/^[A-Za-z_][A-Za-z0-9_]*$/`, max 63 chars.                        |
-| `maskFields`           | `string[]`                  | `[]`           | Case-insensitive. Recursively masked in `data`, `meta`, `before`, `after`. |
-| `maskValue`            | `string`                    | `"[REDACTED]"` | Value used for masked fields.                                      |
-| `defaultMode`          | `"sync" \| "async"`         | `"sync"`       | Used when an event does not specify `mode`.                        |
-| `environment`          | `string`                    | `null`         | Default environment stamped on every event.                        |
-| `onError`              | `(err, record) => void`     | `console.error`| Called when an **async** insert fails.                             |
-| `asyncBatchSize`       | `number`                    | `50`           | Max records processed per async tick. Positive integer.            |
-| `asyncFlushIntervalMs` | `number`                    | `0`            | Delay between async ticks. `0` uses `setImmediate`.                |
+| Option                   | Type                        | Default        | Notes |
+| ------------------------ | --------------------------- | -------------- | ----- |
+| `driver`                 | `"postgres"`                | —              | Only Postgres is supported. |
+| `connectionString`       | `string`                    | —              | Write role (`INSERT`; DDL when `ensureSchema`). |
+| `readConnectionString`   | `string`                    | same as write | Read-only role for `query` (recommended in production). |
+| `defaultScope`           | `string`                    | —              | Must be a key of `scopes`. |
+| `scopes`                 | `Record<string, { tableName }>` | —        | Logical name → physical table. |
+| `bootstrap.ensureSchema` | `boolean`                   | `true`         | Set `false` if migrations own DDL. |
+| `maskFields`             | `string[]`                  | `[]`           | Same semantics as before. |
+| `maskValue`              | `string`                    | `"[REDACTED]"` | |
+| `defaultMode`            | `"sync" \| "async"`         | `"sync"`       | |
+| `environment`            | `string`                    | `undefined`    | |
+| `onError`                | `(err, record) => void`     | `console.error`| Async insert failures. |
+| `asyncBatchSize`         | `number`                    | `50`           | |
+| `asyncFlushIntervalMs`   | `number`                    | `0`            | |
 
 ## Sync vs async
 
@@ -331,10 +246,7 @@ Any object key whose name matches `maskFields` (case-insensitive) is replaced
 with `maskValue`, recursively, inside `data`, `meta`, and `emitDiff`'s `before`/`after`.
 
 ```ts
-createTracevault({
-  /* ... */
-  maskFields: ["password", "token", "pin", "biometricData"],
-});
+// options passed to startTracevault({ … maskFields: ["password", …] })
 
 await audit.emit({
   event: "user.updated",
@@ -372,7 +284,7 @@ import { TracevaultError, ConfigError, ValidationError, DriverError } from "trac
 
 | Class              | Thrown when                                                                      |
 | ------------------ | -------------------------------------------------------------------------------- |
-| `ConfigError`      | `createTracevault` receives an invalid configuration.                            |
+| `ConfigError`      | `startTracevault` receives an invalid configuration.                            |
 | `ValidationError`  | `emit` / `emitDiff` receives an invalid event or a non-JSON-safe payload.        |
 | `DriverError`      | The database driver fails to insert, healthcheck, or close.                      |
 | `TracevaultError`  | Base class. Also thrown directly for lifecycle violations (emit after `close()`). |
@@ -432,42 +344,32 @@ library. These are recommended patterns for consoles and dashboards.
   - `error`: `{ "code": "AUTH_INVALID_CREDENTIALS", "stage": "…", … }` — only
     `code` is mirrored to the `error_code` column for indexed queries.
   - `severity`: e.g. `"warning"` — mirrored to the `severity` column. Suggested
-    ordinal scale (export `DOCUMENTED_SEVERITY_LEVELS` from `tracevault/query`):
+    ordinal scale (export `DOCUMENTED_SEVERITY_LEVELS` from `tracevault`):
     from `debug` through `fatal`, increasing alert importance.
 
 The Read API exposes `outcome`, `errorCode`, and `severity` on each `AuditRecord`
 and accepts filters for them. Use `errorsOnly: true` to list rows with
 `outcome = 'failure'` **or** `severity` in `error` / `critical` / `fatal` (see
-`SEVERITIES_FOR_ERRORS_ONLY_FILTER` on `tracevault/query`).
+`SEVERITIES_FOR_ERRORS_ONLY_FILTER` on `tracevault`).
 
 ## Reading events
 
-Tracevault ships a small, explicit **Read API** under the `tracevault/query`
-subpath. It's deliberately narrow: equality filters on indexed scalar columns
-(including generated `outcome`, `error_code`, and `severity` after migrations **002**–**003**),
-an `occurred_at` window, and deterministic pagination. Anything more exotic
-(JSONB probes, aggregations, joins, analytics) is your decision and belongs
-in raw SQL.
+The **Read API** is exposed as `audit.query` on the app returned by `startTracevault`, and as `audit.getScope("name").query` for each scope. It supports equality filters on scalar columns (including generated `outcome`, `error_code`, and `severity` after migrations **002**–**003**), an `occurred_at` window, and deterministic pagination.
 
 ```ts
-import { createTracevaultQuery } from "tracevault/query";
-
-const query = createTracevaultQuery({
-  driver: "postgres",
-  connectionString: process.env.DATABASE_URL ?? "",
-  tableName: "audit_logs",
-});
-
-const recent = await query.findMany({
+const recent = await audit.query.findMany({
   event: "product.price.updated",
   from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
   limit: 100,
 });
 
-const one = await query.findById("uuid-here"); // AuditRecord | null
-const total = await query.count({ actorType: "user", environment: "prod" });
+const scoped = await audit.getScope("users").query.findMany({
+  event: "user.profile.updated",
+  limit: 50,
+});
 
-await query.close();
+const one = await audit.query.findById("uuid-here"); // AuditRecord | null
+const total = await audit.query.count({ actorType: "user", environment: "prod" });
 ```
 
 ### Filters
@@ -507,45 +409,22 @@ concurrent writes, prefer bounding the query with a `from`/`to` window.
 
 ### Scopes on the Read API
 
-`query.scope(overrides)` mirrors the write-side API: it derives a new
-`TracevaultQuery` that **shares the root's pool** but reads from a
-different table. Only `tableName` may be overridden — `driver` and
-`connectionString` are inherited and cannot be changed.
-
-```ts
-const userQuery = query.scope({ tableName: "audit_user_events" });
-const txQuery   = query.scope({ tableName: "audit_transaction_events" });
-
-const merchantPayments = await txQuery.count({
-  event: "payment.intent.created",
-  actorId: "merchant_42",
-  actorType: "merchant",
-});
-```
+Use **`getScope("users").query`** instead of a separate reader factory. Each scope shares the **read** pool and **write** pool with the rest of the app.
 
 ### Lifecycle and `close()`
 
-Same contract as the write API:
-
-| Call                | Effect                                                                                 |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| `scope.close()`     | Marks this scope unusable. The root pool keeps serving the root and sibling scopes.    |
-| `root.close()`      | Marks every live scope unusable, then releases the shared pool.                        |
-
-`close()` is idempotent. Calling `findMany`/`findById`/`count`/`scope` after
-`close()` throws `TracevaultError`. `healthcheck()` returns `false`.
+Call **`await audit.close()`** on the app once: it drains every scope's write queue, closes the write pool, then closes the read pool. After that, `emit` and `query` throw `TracevaultError`. `healthcheck()` returns `false`.
 
 ### Errors
 
-The Read API throws from the same hierarchy as the write API:
+The Read API throws from the same hierarchy as writes:
 
-- `ConfigError` — bad `config` or bad `scope()` overrides.
+- `ConfigError` — invalid `startTracevault` options or unknown `getScope` name.
 - `ValidationError` — bad filter shape (wrong key, wrong type, `limit`
   out of range, unparseable date, non-UUID passed to `findById`, …).
 - `DriverError` — the underlying Postgres query failed (e.g. the table
   does not exist, the connection is unreachable).
-- `TracevaultError` — the parent class; useful for a single `instanceof`
-  catch. Also thrown when operating on a closed instance.
+- `TracevaultError` — base class and lifecycle violations.
 
 ### Raw SQL still works
 
@@ -557,51 +436,39 @@ directly. The library is designed to coexist peacefully with them.
 ## API
 
 ```ts
-const audit: Tracevault = createTracevault(config);
+import {
+  startTracevault,
+  type TracevaultApp,
+  generateInitSql,
+  type StartTracevaultOptions,
+} from "tracevault";
 
-audit.emit(event)          // Promise<void>
-audit.emitDiff(event)      // Promise<void>
-audit.flush()              // Promise<void>  — drain this instance's async queue
-audit.close()              // Promise<void>  — root: flush every scope + release pool; scope: flush own queue only (idempotent)
-audit.healthcheck()        // Promise<boolean>
-audit.scope(overrides?)    // Tracevault   — derive a sibling that shares the pool but writes to a different table
+const audit: TracevaultApp = await startTracevault(config);
+
+audit.emit(event)           // Promise<void>
+audit.emitDiff(event)       // Promise<void>
+audit.flush()               // Promise<void>
+audit.close()               // Promise<void> — drains all scope queues + both pools
+audit.healthcheck()         // Promise<boolean>
+audit.getScope(name)        // { emit, emitDiff, flush, query }
+
+audit.query.findMany(filters?)
+audit.query.findById(id)
+audit.query.count(filters?)
 ```
-
-Plus the standalone helper:
 
 ```ts
 import { generateInitSql } from "tracevault";
 
-generateInitSql(tableName) // string  — DDL for an audit table (validated, does not execute)
+generateInitSql(tableName) // string — DDL only, does not execute
 ```
 
-And the Read API, exported from a separate subpath:
-
-```ts
-import { createTracevaultQuery } from "tracevault/query";
-
-const query: TracevaultQuery = createTracevaultQuery(config);
-
-query.findMany(filters?)    // Promise<AuditRecord[]>
-query.findById(id)          // Promise<AuditRecord | null>
-query.count(filters?)       // Promise<number>
-query.scope(overrides?)     // TracevaultQuery — shares the pool, reads from another table
-query.close()               // Promise<void> — same root/scope semantics as the write API
-query.healthcheck()         // Promise<boolean>
-```
-
-All types (`AuditEvent`, `AuditDiffEvent`, `TracevaultConfig`,
-`TracevaultScopeOverrides`, `PersistedRecord`, `AuditActor`, `AuditTarget`,
-`AuditMode`, `Diff`, `DiffEntry`, `TracevaultError`, `ConfigError`,
-`ValidationError`, `DriverError`) are exported from the package entry, plus
-correlation helpers (`randomCorrelationId`, `readCorrelationIdHeader`,
-`resolveCorrelationId`) and `generateInitSql`.
-
-Read-specific types (`AuditRecord`, `AuditQueryFilters`,
-`AuditCountFilters`, `TracevaultQuery`, `TracevaultQueryConfig`,
-`TracevaultQueryScopeOverrides`) are exported from `tracevault/query`, along
-with `DOCUMENTED_SEVERITY_LEVELS`, `SEVERITIES_FOR_ERRORS_ONLY_FILTER`, and the
-`DocumentedSeverity` type for UI and dashboards.
+Types (`AuditEvent`, `AuditDiffEvent`, `StartTracevaultOptions`, `TracevaultApp`,
+`PersistedRecord`, `AuditRecord`, `AuditQueryFilters`, `AuditCountFilters`,
+`TracevaultQuery`, `TracevaultError`, `ConfigError`, `ValidationError`,
+`DriverError`, …) and helpers (`randomCorrelationId`, `readCorrelationIdHeader`,
+`resolveCorrelationId`, `DOCUMENTED_SEVERITY_LEVELS`,
+`SEVERITIES_FOR_ERRORS_ONLY_FILTER`, `DocumentedSeverity`) are exported from **`tracevault`**.
 
 ## Example
 
@@ -650,12 +517,10 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for more detail. Release history:
 
 - **PostgreSQL only.** No MySQL, SQLite, Mongo, or file sink in V1.
 - **No distributed queue.** Async mode is in-process and non-durable.
-- **No automatic schema management.** Tracevault never creates tables at boot.
-  Use migrations **001**–**003** for the default table, or `generateInitSql`
-  for additional tables used by scopes.
+- **Optional schema bootstrap.** Use `startTracevault` with `bootstrap.ensureSchema` (default) or apply `sql/` / `generateInitSql` yourself.
 - **No built-in retries.** Sync `emit` throws on failure; async `emit`
   delivers the error to `onError(err, record)` exactly once.
-- **Narrow Read API.** `tracevault/query` supports equality filters on scalar
+- **Narrow Read API.** `audit.query` supports equality filters on scalar
   columns (including generated fields), `errorsOnly` / `severities` for error
   views, a time window on `occurredAt`, deterministic pagination, and
   per-table scopes. No JSONB path filters, no `IS NULL` query helpers, no joins

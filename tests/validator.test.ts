@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Pool } from "pg";
 
 import { ConfigError, ValidationError } from "../src/core/errors.js";
 import {
@@ -7,6 +8,7 @@ import {
   validateDiffEvent,
   validateEvent,
   validateScopeOverrides,
+  validateStartTracevaultOptions,
 } from "../src/core/validator.js";
 import type { TracevaultConfig } from "../src/types/index.js";
 
@@ -332,5 +334,63 @@ describe("validateDiffEvent", () => {
         before: [1] as unknown as Record<string, unknown>,
       }),
     ).toThrow(ValidationError);
+  });
+});
+
+describe("validateStartTracevaultOptions", () => {
+  it("accepts a minimal valid options object", () => {
+    expect(() =>
+      validateStartTracevaultOptions({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        defaultScope: "default",
+        scopes: { default: { tableName: "audit_logs" } },
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects defaultScope not in scopes", () => {
+    expect(() =>
+      validateStartTracevaultOptions({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        defaultScope: "main",
+        scopes: { default: { tableName: "audit_logs" } },
+      }),
+    ).toThrow(/defaultScope/);
+  });
+
+  it("rejects invalid scope name key", () => {
+    expect(() =>
+      validateStartTracevaultOptions({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        defaultScope: "default",
+        scopes: { "bad key": { tableName: "audit_logs" } },
+      }),
+    ).toThrow(ConfigError);
+  });
+});
+
+describe("validateConfig / pool", () => {
+  it("accepts pool with connectionString", () => {
+    const pool = { query: async () => ({ rows: [] }) } as unknown as Pool;
+    expect(() =>
+      validateConfig({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        pool,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects invalid pool", () => {
+    expect(() =>
+      validateConfig({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        pool: {} as Pool,
+      }),
+    ).toThrow(/pool/);
   });
 });

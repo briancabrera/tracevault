@@ -3,6 +3,7 @@ import type {
   AuditDiffEvent,
   AuditEvent,
   AuditTarget,
+  StartTracevaultOptions,
   TracevaultConfig,
   TracevaultScopeOverrides,
 } from "../types/index.js";
@@ -19,6 +20,9 @@ const MAX_ENVIRONMENT_LEN = 128;
 const MAX_TABLE_NAME_LEN = 63; // PostgreSQL identifier limit
 
 const TABLE_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Logical scope names for `startTracevault` / `getScope`. */
+const SCOPE_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /**
  * Fields the `scope()` method is allowed to override. Any other key — and
@@ -41,6 +45,20 @@ const ALLOWED_SCOPE_OVERRIDE_KEYS = new Set<keyof TracevaultScopeOverrides>([
  * Exported because both `validateConfig`, `validateScopeOverrides` and the
  * `generateInitSql` utility must apply the exact same rule.
  */
+export function assertValidScopeName(value: unknown, context: string): asserts value is string {
+  if (typeof value !== "string") {
+    throw new ConfigError(`${context}: scope name must be a string.`);
+  }
+  if (value.length === 0 || value.length > 64) {
+    throw new ConfigError(`${context}: scope name length must be between 1 and 64.`);
+  }
+  if (!SCOPE_NAME_REGEX.test(value)) {
+    throw new ConfigError(
+      `${context}: scope name must match /^[a-zA-Z][a-zA-Z0-9_-]*$/ (letters, digits, underscores, hyphens).`,
+    );
+  }
+}
+
 export function assertValidTableName(value: unknown, context: string): asserts value is string {
   if (typeof value !== "string") {
     throw new ConfigError(`${context}: \`tableName\` must be a string.`);
@@ -68,8 +86,14 @@ export function validateConfig(config: TracevaultConfig): void {
 
   if (!VALID_DRIVERS.has(config.driver)) {
     throw new ConfigError(
-      `Tracevault config: unsupported driver "${config.driver}". V1 only supports "postgres".`,
+      `Tracevault config: unsupported driver "${config.driver}". Only "postgres" is supported.`,
     );
+  }
+
+  if (config.pool !== undefined && config.pool !== null) {
+    if (typeof config.pool !== "object" || typeof (config.pool as { query?: unknown }).query !== "function") {
+      throw new ConfigError("Tracevault config: `pool` must be a pg.Pool with a `.query` method.");
+    }
   }
 
   if (typeof config.connectionString !== "string" || config.connectionString.trim().length === 0) {
@@ -326,4 +350,102 @@ export function validateDiffEvent(event: AuditDiffEvent): void {
   validatePlainObjectField(event.before, "before");
   validatePlainObjectField(event.after, "after");
   validatePlainObjectField(event.meta, "meta");
+}
+
+export function validateStartTracevaultOptions(options: StartTracevaultOptions): void {
+  if (!options || typeof options !== "object") {
+    throw new ConfigError("startTracevault: options must be an object.");
+  }
+
+  if (!options.driver) {
+    throw new ConfigError("startTracevault: `driver` is required.");
+  }
+  if (!VALID_DRIVERS.has(options.driver)) {
+    throw new ConfigError(
+      `startTracevault: unsupported driver "${String(options.driver)}". Only "postgres" is supported.`,
+    );
+  }
+
+  if (typeof options.connectionString !== "string" || options.connectionString.trim().length === 0) {
+    throw new ConfigError(
+      "startTracevault: `connectionString` is required and must be a non-empty string.",
+    );
+  }
+
+  if (options.readConnectionString !== undefined) {
+    if (
+      typeof options.readConnectionString !== "string" ||
+      options.readConnectionString.trim().length === 0
+    ) {
+      throw new ConfigError(
+        "startTracevault: `readConnectionString` must be a non-empty string when provided.",
+      );
+    }
+  }
+
+  if (typeof options.defaultScope !== "string" || options.defaultScope.length === 0) {
+    throw new ConfigError("startTracevault: `defaultScope` is required.");
+  }
+  assertValidScopeName(options.defaultScope, "startTracevault.defaultScope");
+
+  if (!options.scopes || typeof options.scopes !== "object" || Array.isArray(options.scopes)) {
+    throw new ConfigError("startTracevault: `scopes` must be a non-empty object.");
+  }
+
+  const scopeKeys = Object.keys(options.scopes);
+  if (scopeKeys.length === 0) {
+    throw new ConfigError("startTracevault: `scopes` must contain at least one scope.");
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(options.scopes, options.defaultScope)) {
+    throw new ConfigError(
+      `startTracevault: \`defaultScope\` "${options.defaultScope}" is not a key in \`scopes\`.`,
+    );
+  }
+
+  for (const key of scopeKeys) {
+    assertValidScopeName(key, `startTracevault.scopes["${key}"]`);
+    const entry = (options.scopes as Record<string, unknown>)[key];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ConfigError(`startTracevault.scopes["${key}"] must be an object with { tableName }.`);
+    }
+    const tableName = (entry as { tableName?: unknown }).tableName;
+    assertValidTableName(tableName, `startTracevault.scopes["${key}"].tableName`);
+  }
+
+  if (options.defaultMode !== undefined && !VALID_MODES.has(options.defaultMode)) {
+    throw new ConfigError(
+      `startTracevault: \`defaultMode\` must be "sync" or "async", got "${String(options.defaultMode)}".`,
+    );
+  }
+
+  if (options.maskFields !== undefined) {
+    assertValidMaskFields(options.maskFields, "startTracevault");
+  }
+
+  if (options.maskValue !== undefined && typeof options.maskValue !== "string") {
+    throw new ConfigError("startTracevault: `maskValue` must be a string.");
+  }
+
+  if (options.environment !== undefined) {
+    assertValidEnvironment(options.environment, "startTracevault");
+  }
+
+  if (options.onError !== undefined && typeof options.onError !== "function") {
+    throw new ConfigError("startTracevault: `onError` must be a function.");
+  }
+
+  if (options.asyncBatchSize !== undefined) {
+    if (!Number.isInteger(options.asyncBatchSize) || options.asyncBatchSize <= 0) {
+      throw new ConfigError("startTracevault: `asyncBatchSize` must be a positive integer.");
+    }
+  }
+
+  if (options.asyncFlushIntervalMs !== undefined) {
+    if (!Number.isFinite(options.asyncFlushIntervalMs) || options.asyncFlushIntervalMs < 0) {
+      throw new ConfigError(
+        "startTracevault: `asyncFlushIntervalMs` must be a non-negative finite number.",
+      );
+    }
+  }
 }

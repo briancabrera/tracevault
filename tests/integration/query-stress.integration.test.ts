@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 
-import { generateInitSql } from "../../src/index.js";
-import { createTracevaultQuery } from "../../src/query/index.js";
+import { generateInitSql } from "../../src/core/schema.js";
+import { createTracevaultQuery } from "../../src/query/query.js";
 import { CONN_STRING, createDbClient, truncate } from "./helpers.js";
 
 // Dedicated pool of tables for read stress. Independent from write stress so

@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 
-import { generateInitSql, createTracevault } from "../../src/index.js";
+import { createTracevault } from "../../src/core/tracevault.js";
+import { generateInitSql } from "../../src/core/schema.js";
 import {
   CONN_STRING,
   TABLE,

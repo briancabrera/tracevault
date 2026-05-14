@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Pool } from "pg";
 
 import { ConfigError, ValidationError } from "../../src/core/errors.js";
 import {
@@ -15,6 +16,17 @@ describe("query / validateQueryConfig", () => {
       validateQueryConfig({
         driver: "postgres",
         connectionString: "postgres://localhost/x",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts pool with connectionString", () => {
+    const pool = { query: async () => ({ rows: [] }) } as unknown as Pool;
+    expect(() =>
+      validateQueryConfig({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        pool,
       }),
     ).not.toThrow();
   });

@@ -1,11 +1,17 @@
 import express, { type Request, type Response } from "express";
 
-import { createTracevault, resolveCorrelationId } from "tracevault";
+import { resolveCorrelationId, startTracevault } from "tracevault";
 
-const audit = createTracevault({
+const dbUrl = process.env.DATABASE_URL ?? "postgres://localhost:5432/tracevault_example";
+
+const audit = await startTracevault({
   driver: "postgres",
-  connectionString: process.env.DATABASE_URL ?? "postgres://localhost:5432/tracevault_example",
-  tableName: "audit_logs",
+  connectionString: dbUrl,
+  defaultScope: "default",
+  scopes: {
+    default: { tableName: "audit_logs" },
+  },
+  bootstrap: { ensureSchema: true },
   maskFields: ["password", "token", "pin"],
   defaultMode: "sync",
   environment: process.env.NODE_ENV ?? "development",

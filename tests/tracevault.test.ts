@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTracevault } from "../src/index.js";
+import { createTracevault } from "../src/core/tracevault.js";
 import { TracevaultError, ConfigError, ValidationError } from "../src/core/errors.js";
 
 type QueryCall = { sql: string; params: unknown[] };

@@ -5,7 +5,7 @@ import {
   TracevaultError,
   ValidationError,
 } from "../../src/core/errors.js";
-import { createTracevaultQuery } from "../../src/query/index.js";
+import { createTracevaultQuery } from "../../src/query/query.js";
 
 type QueryCall = { sql: string; params: unknown[] };
 
