@@ -5,13 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-05-14
+
+### Added
+
+- **`startTracevault` pool injection** — optional **`pool`** and **`readPool`** (`pg.Pool`) so DDL (`bootstrap.ensureSchema`), writes, and reads use the same driver configuration as the host app (TLS / RDS CA, custom `ssl`, pools from `@flash/pg-config`, …). DDL uses `pool.connect()` / `client.release()` instead of a separate `pg.Client` when a pool is supplied.
+- **`assertPgPoolLike`** — exported helper that validates a value has pool-like **`.query`** and **`.connect`** (for tests or adapters).
+
+### Changed
+
+- **`close()`** on the app calls **`pool.end()`** only for pools Tracevault created. If you pass **`pool`** / **`readPool`**, you own their lifecycle: call **`await audit.close()`** first (drain queues, release internal state), then end the pool(s) yourself if you are shutting down the process.
+
+### Validation
+
+- **`readPool`** requires **`pool`** (both injected).
+- With a single injected write **`pool`** (no **`readPool`**), **`readConnectionString`** must match **`connectionString`** or be omitted — use **`readPool`** for a physical replica URL.
+
 ## [1.0.0] - 2026-05-14
 
 ### Added
 
 - **`startTracevault`**: single application entry point — optional idempotent DDL (`bootstrap.ensureSchema`), named `scopes`, separate **write** and **read** `pg.Pool`s (`readConnectionString` optional; defaults to the write URL for local use), integrated **`query`** (`findMany`, `findById`, `count`) on the app and on each `getScope(name)` handle.
 - **`audit-ddl`**: shared DDL statements used by `generateInitSql` and runtime bootstrap.
-- **`assertValidScopeName`** and **`validateStartTracevaultOptions`**.
+- **`assertValidScopeName`** and runtime validation of `startTracevault` options.
 
 ### Changed
 

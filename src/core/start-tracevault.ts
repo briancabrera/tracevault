@@ -47,7 +47,8 @@ function attachPoolErrorHandler(pool: Pool): void {
 
 /**
  * Start Tracevault for a typical application: optional schema bootstrap,
- * separate read/write pools, named scopes, and integrated read API.
+ * separate read/write pools (or one injected pool with TLS), named scopes,
+ * and integrated read API.
  */
 export async function startTracevault(options: StartTracevaultOptions): Promise<TracevaultApp> {
   validateStartTracevaultOptions(options);
@@ -55,24 +56,55 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
   const ensureSchema = options.bootstrap?.ensureSchema !== false;
 
   if (ensureSchema) {
-    const client = new Client({ connectionString: options.connectionString });
-    await client.connect();
-    try {
-      const uniqueTables = [...new Set(Object.values(options.scopes).map((s) => s.tableName))];
-      for (const tableName of uniqueTables) {
-        await ensureAuditTableSchema(client, tableName);
+    const uniqueTables = [...new Set(Object.values(options.scopes).map((s) => s.tableName))];
+    if (options.pool) {
+      const client = await options.pool.connect();
+      try {
+        for (const tableName of uniqueTables) {
+          await ensureAuditTableSchema(client, tableName);
+        }
+      } finally {
+        client.release();
       }
-    } finally {
-      await client.end();
+    } else {
+      const client = new Client({ connectionString: options.connectionString });
+      await client.connect();
+      try {
+        for (const tableName of uniqueTables) {
+          await ensureAuditTableSchema(client, tableName);
+        }
+      } finally {
+        await client.end();
+      }
     }
   }
 
-  const writePool = new Pool({ connectionString: options.connectionString });
-  attachPoolErrorHandler(writePool);
+  let writePool: Pool;
+  let ownsWritePool: boolean;
+  if (options.pool) {
+    writePool = options.pool;
+    ownsWritePool = false;
+  } else {
+    writePool = new Pool({ connectionString: options.connectionString });
+    attachPoolErrorHandler(writePool);
+    ownsWritePool = true;
+  }
 
   const readCs = options.readConnectionString ?? options.connectionString;
-  const readPool = new Pool({ connectionString: readCs });
-  attachPoolErrorHandler(readPool);
+
+  let readPool: Pool;
+  let ownsReadPool: boolean;
+  if (options.readPool) {
+    readPool = options.readPool;
+    ownsReadPool = false;
+  } else if (options.pool) {
+    readPool = options.pool;
+    ownsReadPool = false;
+  } else {
+    readPool = new Pool({ connectionString: readCs });
+    attachPoolErrorHandler(readPool);
+    ownsReadPool = true;
+  }
 
   const defaultEntry = options.scopes[options.defaultScope];
   if (!defaultEntry) {
@@ -86,6 +118,7 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
     driver: "postgres",
     connectionString: options.connectionString,
     pool: writePool,
+    endPoolOnClose: ownsWritePool,
     tableName: defaultTable,
     defaultMode: options.defaultMode,
     environment: options.environment,
@@ -100,6 +133,7 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
     driver: "postgres",
     connectionString: readCs,
     pool: readPool,
+    endPoolOnClose: ownsReadPool,
     tableName: defaultTable,
   });
 

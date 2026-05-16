@@ -49,6 +49,7 @@ normalization, and persistence.
 - **Sync** persistence (write-through) or **async** persistence (in-process queue).
 - **PostgreSQL** driver with `JSONB`-first, event-oriented schema.
 - **Multi-table audits** — logical scope names map to physical tables; `getScope("users")` shares the same write/read pools as the root.
+- **Optional shared `pg.Pool`** — pass **`pool`** (and optionally **`readPool`**) so schema bootstrap and auditing reuse your TLS/RDS/`ssl` configuration instead of opening bare clients from URLs alone.
 - **Narrow Read API** on the same app object (`audit.query`) — equality filters (including
   generated `outcome` / `errorCode` / `severity`), `errorsOnly` shorthand,
   `severities` list filter, time windows, deterministic pagination, per-scope
@@ -188,7 +189,7 @@ Notes on the diff shape:
 
 Logical keys in `scopes` map to physical `tableName` values once at startup. Use **`getScope("users")`** for writes and **`getScope("users").query`** for reads. The default scope (`defaultScope`) is what `audit.emit` / `audit.query` use.
 
-Each non-default scope has its **own async queue** on the write path. **`close()`** on the app drains every queue and shuts down **both** pools.
+Each non-default scope has its **own async queue** on the write path. **`close()`** drains every queue, then ends **only** the pools Tracevault constructed. If you inject **`pool`** / **`readPool`**, end those yourself after **`await audit.close()`** when tearing down the process.
 
 ### `generateInitSql` (operators / CI)
 
@@ -208,7 +209,9 @@ node -e 'console.log(require("tracevault").generateInitSql("audit_user_events"))
 | ------------------------ | --------------------------- | -------------- | ----- |
 | `driver`                 | `"postgres"`                | —              | Only Postgres is supported. |
 | `connectionString`       | `string`                    | —              | Write role (`INSERT`; DDL when `ensureSchema`). |
-| `readConnectionString`   | `string`                    | same as write | Read-only role for `query` (recommended in production). |
+| `readConnectionString`   | `string`                    | same as write | Read-only role for `query` (recommended in production). Ignored for reads when **`readPool`** is set. |
+| `pool`                   | `pg.Pool`                   | —              | Optional. Shared write pool (DDL + inserts). Must define **`.query`** and **`.connect`**. |
+| `readPool`               | `pg.Pool`                   | —              | Optional reader pool (e.g. replica). Requires **`pool`**; do not set a different **`readConnectionString`** unless you use two pools. |
 | `defaultScope`           | `string`                    | —              | Must be a key of `scopes`. |
 | `scopes`                 | `Record<string, { tableName }>` | —        | Logical name → physical table. |
 | `bootstrap.ensureSchema` | `boolean`                   | `true`         | Set `false` if migrations own DDL. |
@@ -219,6 +222,26 @@ node -e 'console.log(require("tracevault").generateInitSql("audit_user_events"))
 | `onError`                | `(err, record) => void`     | `console.error`| Async insert failures. |
 | `asyncBatchSize`         | `number`                    | `50`           | |
 | `asyncFlushIntervalMs`   | `number`                    | `0`            | |
+
+### Shared `pg.Pool` (TLS, RDS, `@flash/pg-config`)
+
+When you need **`ssl`** (custom CA for RDS, mutual TLS, etc.), build **`Pool`** instances the same way as the rest of your service and pass them in. Tracevault runs **`ensureAuditTableSchema`** via **`pool.connect()`** / **`release()`**, so bootstrap sees the same options as runtime queries.
+
+```ts
+import { startTracevault } from "tracevault";
+import { createPgPool } from "@flash/pg-config"; // example: your shared factory
+
+const pool = createPgPool({ connectionString: process.env.DATABASE_URL! });
+const audit = await startTracevault({
+  driver: "postgres",
+  connectionString: process.env.DATABASE_URL!,
+  pool,
+  defaultScope: "default",
+  scopes: { default: { tableName: "audit_logs" } },
+});
+```
+
+Use **`readPool`** when the read side should hit a replica; **`readPool`** requires **`pool`**. With only **`pool`** (no **`readPool`**), **`readConnectionString`** must match **`connectionString`** or be omitted.
 
 ## Sync vs async
 
@@ -413,7 +436,7 @@ Use **`getScope("users").query`** instead of a separate reader factory. Each sco
 
 ### Lifecycle and `close()`
 
-Call **`await audit.close()`** on the app once: it drains every scope's write queue, closes the write pool, then closes the read pool. After that, `emit` and `query` throw `TracevaultError`. `healthcheck()` returns `false`.
+Call **`await audit.close()`** on the app once: it drains every scope's write queue, then ends **Tracevault-owned** write/read pools. Injected **`pool`** / **`readPool`** are not ended by Tracevault. After close, `emit` and `query` throw `TracevaultError`. `healthcheck()` returns `false`.
 
 ### Errors
 
@@ -448,7 +471,7 @@ const audit: TracevaultApp = await startTracevault(config);
 audit.emit(event)           // Promise<void>
 audit.emitDiff(event)       // Promise<void>
 audit.flush()               // Promise<void>
-audit.close()               // Promise<void> — drains all scope queues + both pools
+audit.close()               // Promise<void> — drains queues; ends only pools Tracevault created
 audit.healthcheck()         // Promise<boolean>
 audit.getScope(name)        // { emit, emitDiff, flush, query }
 
@@ -467,7 +490,7 @@ Types (`AuditEvent`, `AuditDiffEvent`, `StartTracevaultOptions`, `TracevaultApp`
 `PersistedRecord`, `AuditRecord`, `AuditQueryFilters`, `AuditCountFilters`,
 `TracevaultQuery`, `TracevaultError`, `ConfigError`, `ValidationError`,
 `DriverError`, …) and helpers (`randomCorrelationId`, `readCorrelationIdHeader`,
-`resolveCorrelationId`, `DOCUMENTED_SEVERITY_LEVELS`,
+`resolveCorrelationId`, `assertPgPoolLike`, `DOCUMENTED_SEVERITY_LEVELS`,
 `SEVERITIES_FOR_ERRORS_ONLY_FILTER`, `DocumentedSeverity`) are exported from **`tracevault`**.
 
 ## Example

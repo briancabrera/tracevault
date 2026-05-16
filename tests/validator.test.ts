@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 
 import { ConfigError, ValidationError } from "../src/core/errors.js";
@@ -370,11 +370,62 @@ describe("validateStartTracevaultOptions", () => {
       }),
     ).toThrow(ConfigError);
   });
+
+  it("rejects readPool without pool", () => {
+    expect(() =>
+      validateStartTracevaultOptions({
+        driver: "postgres",
+        connectionString: "postgres://w/x",
+        defaultScope: "default",
+        scopes: { default: { tableName: "audit_logs" } },
+        readPool: {
+          query: async () => ({ rows: [] }),
+          connect: async () => ({ release: vi.fn() }),
+        } as unknown as Pool,
+      }),
+    ).toThrow(/`readPool` requires `pool`/);
+  });
+
+  it("rejects mismatched readConnectionString when using one injected pool", () => {
+    const pool = {
+      query: async () => ({ rows: [] }),
+      connect: async () => ({ release: vi.fn() }),
+    } as unknown as Pool;
+    expect(() =>
+      validateStartTracevaultOptions({
+        driver: "postgres",
+        connectionString: "postgres://write/x",
+        readConnectionString: "postgres://read/x",
+        pool,
+        defaultScope: "default",
+        scopes: { default: { tableName: "audit_logs" } },
+      }),
+    ).toThrow(/readPool/);
+  });
+
+  it("accepts injected pool with connect + query", () => {
+    const pool = {
+      query: async () => ({ rows: [] }),
+      connect: async () => ({ release: vi.fn() }),
+    } as unknown as Pool;
+    expect(() =>
+      validateStartTracevaultOptions({
+        driver: "postgres",
+        connectionString: "postgres://localhost/x",
+        pool,
+        defaultScope: "default",
+        scopes: { default: { tableName: "audit_logs" } },
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("validateConfig / pool", () => {
   it("accepts pool with connectionString", () => {
-    const pool = { query: async () => ({ rows: [] }) } as unknown as Pool;
+    const pool = {
+      query: async () => ({ rows: [] }),
+      connect: async () => ({ release: vi.fn() }),
+    } as unknown as Pool;
     expect(() =>
       validateConfig({
         driver: "postgres",

@@ -1,6 +1,6 @@
 {
   "name": "tracevault",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Lightweight audit events for Node.js: startTracevault for PostgreSQL with named scopes, integrated read API, and strict validation.",
   "keywords": [
     "audit",

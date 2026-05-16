@@ -18,7 +18,7 @@ export {
   readCorrelationIdHeader,
   resolveCorrelationId,
 } from "./core/correlation.js";
-export { assertValidScopeName, assertValidTableName } from "./core/validator.js";
+export { assertValidScopeName, assertValidTableName, assertPgPoolLike } from "./core/validator.js";
 
 export type {
   AuditActor,

@@ -46,6 +46,8 @@ interface EffectiveConfig {
  */
 interface SharedRuntime {
   pool: Pool;
+  /** Root only: whether `close()` should call `pool.end()`. */
+  endPoolOnClose: boolean;
   /** Set to `true` when root.close() has started. */
   rootClosed: boolean;
   /** Cached promise so `root.close()` is idempotent. */
@@ -110,6 +112,7 @@ export function createTracevault(config: TracevaultConfig): Tracevault {
     new Pool({
       connectionString: config.connectionString,
     });
+  const endPoolOnClose = config.endPoolOnClose ?? config.pool === undefined;
   if (!config.pool) {
     // Prevent unhandled 'error' events (pg emits them on idle client failures)
     // from crashing the process. Per-query errors still surface via `insert()`.
@@ -124,6 +127,7 @@ export function createTracevault(config: TracevaultConfig): Tracevault {
 
   const runtime: SharedRuntime = {
     pool,
+    endPoolOnClose,
     rootClosed: false,
     rootClosing: null,
     scopes: new Set(),
@@ -250,11 +254,13 @@ function buildInstance(
               }),
             ),
           );
-          // 3. Release the shared pool.
-          try {
-            await runtime.pool.end();
-          } catch (err) {
-            throw new DriverError("Tracevault: failed to close PostgreSQL pool.", err);
+          // 3. Release the shared pool when this factory owns it.
+          if (runtime.endPoolOnClose) {
+            try {
+              await runtime.pool.end();
+            } catch (err) {
+              throw new DriverError("Tracevault: failed to close PostgreSQL pool.", err);
+            }
           }
         })();
         return runtime.rootClosing;

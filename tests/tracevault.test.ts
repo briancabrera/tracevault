@@ -1,3 +1,4 @@
+import type { Pool } from "pg";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTracevault } from "../src/core/tracevault.js";
@@ -19,6 +20,7 @@ vi.mock("pg", () => {
   class Pool {
     query = queryImpl;
     end = endImpl;
+    connect = vi.fn(async () => ({ release: vi.fn() }));
     on = (_event: string, _handler: (...args: unknown[]) => void) => this;
   }
   return { Pool, default: { Pool } };
@@ -89,6 +91,34 @@ describe("createTracevault", () => {
     expect(params[10]).toBe("corr-1");
     expect(params[11]).toBe("req-1");
     expect(params[12]).toBe("test");
+  });
+
+  it("ends owned pool on root close", async () => {
+    const audit = createTracevault({
+      driver: "postgres",
+      connectionString: "postgres://localhost/x",
+    });
+    await audit.close();
+    expect(endImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call end() on an injected pool when closing", async () => {
+    const end = vi.fn(async () => {});
+    const pool = {
+      query: queryImpl,
+      end,
+      connect: vi.fn(async () => ({ release: vi.fn() })),
+      on: () => pool,
+    } as unknown as Pool;
+
+    const audit = createTracevault({
+      driver: "postgres",
+      connectionString: "postgres://localhost/x",
+      pool,
+      tableName: "audit_logs",
+    });
+    await audit.close();
+    expect(end).not.toHaveBeenCalled();
   });
 
   it("uses defaultMode when event does not override it", async () => {

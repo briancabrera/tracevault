@@ -1,5 +1,5 @@
 import { ConfigError, ValidationError } from "../core/errors.js";
-import { assertValidTableName } from "../core/validator.js";
+import { assertValidTableName, assertPgPoolLike } from "../core/validator.js";
 import type {
   AuditCountFilters,
   AuditQueryFilters,
@@ -102,11 +102,11 @@ export function validateQueryConfig(config: TracevaultQueryConfig): void {
   }
 
   if (config.pool !== undefined && config.pool !== null) {
-    if (typeof config.pool !== "object" || typeof (config.pool as { query?: unknown }).query !== "function") {
-      throw new ConfigError(
-        "Tracevault query config: `pool` must be a pg.Pool with a `.query` method.",
-      );
-    }
+    assertPgPoolLike(config.pool, "Tracevault query config: `pool`");
+  }
+
+  if (config.endPoolOnClose !== undefined && typeof config.endPoolOnClose !== "boolean") {
+    throw new ConfigError("Tracevault query config: `endPoolOnClose` must be a boolean.");
   }
 
   if (typeof config.connectionString !== "string" || config.connectionString.trim().length === 0) {

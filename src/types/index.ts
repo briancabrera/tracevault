@@ -93,6 +93,11 @@ export interface TracevaultConfig {
    * validation and documentation.
    */
   pool?: Pool;
+  /**
+   * When `false`, root `close()` drains queues but does not call `pool.end()`.
+   * Defaults to `true` if this factory created the pool, `false` if `pool` was injected.
+   */
+  endPoolOnClose?: boolean;
   tableName?: string;
   maskFields?: readonly string[];
   maskValue?: string;
@@ -201,9 +206,22 @@ export interface StartTracevaultBootstrap {
 /** Options passed to {@link startTracevault}. */
 export interface StartTracevaultOptions {
   driver: AuditDriver;
-  /** Write role (`INSERT`, and DDL when `bootstrap.ensureSchema` is enabled). */
+  /**
+   * Write URL (`INSERT`, and DDL when `bootstrap.ensureSchema` runs without {@link StartTracevaultOptions.pool}).
+   * Still required when using an injected {@link StartTracevaultOptions.pool} (validation / query config).
+   */
   connectionString: string;
-  /** Read-only role for the Read API. Defaults to `connectionString` (single role). */
+  /**
+   * Pre-configured write pool (TLS/ssl, RDS, `@flash/pg-config`, etc.). Bootstrap DDL uses
+   * `pool.connect()` so it shares the same options as your app.
+   */
+  pool?: Pool;
+  /**
+   * Optional read pool (e.g. replica). Requires {@link StartTracevaultOptions.pool} for writes.
+   * When omitted and `pool` is set, reads use the same pool as writes.
+   */
+  readPool?: Pool;
+  /** Read URL when Tracevault creates the read `Pool` itself. Ignored when `readPool` / shared `pool` is used for reads (except it must match `connectionString` if only one pool handles both). */
   readConnectionString?: string;
   /** Must be a key of `scopes`. */
   defaultScope: string;

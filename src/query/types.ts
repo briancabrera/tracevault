@@ -85,9 +85,9 @@ export interface AuditQueryFilters {
    */
   severities?: readonly string[];
   /**
- * When `true`, keeps rows where `outcome = 'failure'` **or** `severity` is one
- * of `error`, `critical`, `fatal` (see `SEVERITIES_FOR_ERRORS_ONLY_FILTER` on
- * the main package export).
+   * When `true`, keeps rows where `outcome = 'failure'` **or** `severity` is one
+   * of `error`, `critical`, `fatal` (see `SEVERITIES_FOR_ERRORS_ONLY_FILTER` on
+   * the main package export).
    */
   errorsOnly?: boolean;
   mode?: AuditMode;
@@ -115,6 +115,11 @@ export interface TracevaultQueryConfig {
    * `connectionString`.
    */
   pool?: Pool;
+  /**
+   * When `false`, root `close()` does not call `pool.end()`.
+   * Defaults to `true` if this factory created the pool, `false` if `pool` was injected.
+   */
+  endPoolOnClose?: boolean;
   tableName?: string;
 }
 

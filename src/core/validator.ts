@@ -75,6 +75,25 @@ export function assertValidTableName(value: unknown, context: string): asserts v
   }
 }
 
+/**
+ * Ensures `value` looks like a `pg.Pool` (`.query` + `.connect`).
+ * Used for injected pools so bootstrap DDL can `connect()` / `release()`.
+ */
+export function assertPgPoolLike(value: unknown, contextLabel: string): void {
+  if (value === undefined || value === null) {
+    throw new ConfigError(`${contextLabel} pool must be defined.`);
+  }
+  if (typeof value !== "object") {
+    throw new ConfigError(`${contextLabel} pool must be an object.`);
+  }
+  const p = value as { query?: unknown; connect?: unknown };
+  if (typeof p.query !== "function" || typeof p.connect !== "function") {
+    throw new ConfigError(
+      `${contextLabel} must be a pg.Pool with \`.query\` and \`.connect\` methods.`,
+    );
+  }
+}
+
 export function validateConfig(config: TracevaultConfig): void {
   if (!config || typeof config !== "object") {
     throw new ConfigError("Tracevault config must be an object.");
@@ -91,9 +110,11 @@ export function validateConfig(config: TracevaultConfig): void {
   }
 
   if (config.pool !== undefined && config.pool !== null) {
-    if (typeof config.pool !== "object" || typeof (config.pool as { query?: unknown }).query !== "function") {
-      throw new ConfigError("Tracevault config: `pool` must be a pg.Pool with a `.query` method.");
-    }
+    assertPgPoolLike(config.pool, "Tracevault config: `pool`");
+  }
+
+  if (config.endPoolOnClose !== undefined && typeof config.endPoolOnClose !== "boolean") {
+    throw new ConfigError("Tracevault config: `endPoolOnClose` must be a boolean.");
   }
 
   if (typeof config.connectionString !== "string" || config.connectionString.trim().length === 0) {
@@ -369,6 +390,31 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
   if (typeof options.connectionString !== "string" || options.connectionString.trim().length === 0) {
     throw new ConfigError(
       "startTracevault: `connectionString` is required and must be a non-empty string.",
+    );
+  }
+
+  if (options.readPool !== undefined && options.readPool !== null && !options.pool) {
+    throw new ConfigError(
+      "startTracevault: `readPool` requires `pool` — supply the write pool first.",
+    );
+  }
+
+  if (options.pool !== undefined && options.pool !== null) {
+    assertPgPoolLike(options.pool, "startTracevault: `pool`");
+  }
+
+  if (options.readPool !== undefined && options.readPool !== null) {
+    assertPgPoolLike(options.readPool, "startTracevault: `readPool`");
+  }
+
+  if (
+    options.pool &&
+    !options.readPool &&
+    options.readConnectionString !== undefined &&
+    options.readConnectionString !== options.connectionString
+  ) {
+    throw new ConfigError(
+      "startTracevault: with one injected `pool` for reads and writes, `readConnectionString` must equal `connectionString` (or be omitted). For a different read URL, pass `readPool`.",
     );
   }
 

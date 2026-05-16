@@ -28,6 +28,7 @@ vi.mock("pg", () => {
   class Pool {
     query = queryImpl;
     end = endImpl;
+    connect = vi.fn(async () => ({ release: vi.fn() }));
     on = (_event: string, _handler: (...args: unknown[]) => void) => this;
     constructor(opts: unknown) {
       poolCtor(opts);

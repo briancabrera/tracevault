@@ -26,6 +26,7 @@ const EXPECTED_FUNCTIONS = [
   "resolveCorrelationId",
   "assertValidScopeName",
   "assertValidTableName",
+  "assertPgPoolLike",
 ];
 const EXPECTED_ERROR_CLASSES = [
   "TracevaultError",

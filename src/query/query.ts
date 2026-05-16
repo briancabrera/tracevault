@@ -31,6 +31,7 @@ interface EffectiveQueryConfig {
  */
 interface SharedRuntime {
   pool: Pool;
+  endPoolOnClose: boolean;
   rootClosed: boolean;
   rootClosing: Promise<void> | null;
   scopes: Set<InternalScopeHandle>;
@@ -69,6 +70,7 @@ export function createTracevaultQuery(config: TracevaultQueryConfig): Tracevault
     new Pool({
       connectionString: config.connectionString,
     });
+  const endPoolOnClose = config.endPoolOnClose ?? config.pool === undefined;
   if (!config.pool) {
     pool.on("error", () => {
       /* swallow */
@@ -81,6 +83,7 @@ export function createTracevaultQuery(config: TracevaultQueryConfig): Tracevault
 
   const runtime: SharedRuntime = {
     pool,
+    endPoolOnClose,
     rootClosed: false,
     rootClosing: null,
     scopes: new Set(),
@@ -191,13 +194,15 @@ function buildInstance(
           const scopes = Array.from(runtime.scopes);
           runtime.scopes.clear();
           await Promise.all(scopes.map((s) => s.close().catch(() => {})));
-          try {
-            await runtime.pool.end();
-          } catch (err) {
-            throw new DriverError(
-              "Tracevault: failed to close PostgreSQL pool (query).",
-              err,
-            );
+          if (runtime.endPoolOnClose) {
+            try {
+              await runtime.pool.end();
+            } catch (err) {
+              throw new DriverError(
+                "Tracevault: failed to close PostgreSQL pool (query).",
+                err,
+              );
+            }
           }
         })();
         return runtime.rootClosing;
