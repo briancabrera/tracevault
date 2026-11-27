@@ -61,9 +61,12 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
       const client = await options.pool.connect();
       try {
         await bootstrapAuditSchema(client, tables);
-      } finally {
-        client.release();
+      } catch (err) {
+        // Destroy rather than reuse: the session may still be mid-transaction.
+        client.release(err instanceof Error ? err : true);
+        throw err;
       }
+      client.release();
     } else {
       const client = new Client({ connectionString: options.connectionString });
       await client.connect();
