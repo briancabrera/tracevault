@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Upgrading older schemas** — `bootstrap.ensureSchema` now adds the generated `outcome`, `error_code` and `severity` columns to tables created by `sql/001` only. Before, `startTracevault` failed with `column "error_code" does not exist`.
 - **Concurrent startup** — schema bootstrap runs under a PostgreSQL advisory lock, so several replicas starting at once no longer fail with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
 - **Long table names** — index names that would exceed 63 chars now use a shortened, hashed prefix. Before, PostgreSQL truncated them, they collided, and most indexes were silently skipped. Names that already fit are unchanged.
+- **`close()` lost async events with `asyncFlushIntervalMs > 0`** — `flush()`/`close()` waited behind the unref'd interval timer, so a script ending with `await audit.close()` could exit before writing anything. They now drain immediately.
+- **Closed scopes leaked** — `scope().close()` now removes the scope from the root, so creating and closing scopes per request no longer grows memory.
+- **Values PostgreSQL refuses now fail validation** — NUL characters (in `data`/`meta` and identifiers), unpaired UTF-16 surrogates in `data`/`meta`, and `data.outcome` > 64, `data.error.code` > 255 or `data.severity` > 32 characters throw `ValidationError` from `emit()`. Before, they failed at the database: a `DriverError` in sync mode, or an `onError` call in async mode.
 
 ### Changed
 
