@@ -174,14 +174,15 @@ async function assertNoOversizedValues(
   const detail = problems
     .map((c) => {
       const where = `length(BTRIM(data #>> '${c.path}')) > ${c.maxLength}`;
-      // Sibling key, so nothing in the audit payload is lost (works for objects too).
-      const keepPath = c.path.replace(/\}$/, "_original}");
-      const keep = keepPath.slice(1, -1).replace(",", ".");
+      // Copy the original to a new top-level key (works for objects too) and
+      // skip rows that already use that key, so nothing is ever overwritten.
+      const keep = `tracevault_original_${c.name}`;
       return (
         `  - ${Number(found[c.name])} row(s) with data#>>'${c.path}' longer than ${c.maxLength} chars ` +
-        `(column "${c.name}"). Fix, e.g. (keeps the original under "${keep}"):\n` +
-        `      UPDATE "${t}" SET data = jsonb_set(jsonb_set(data, '${keepPath}', data #> '${c.path}'), ` +
-        `'${c.path}', to_jsonb(left(BTRIM(data #>> '${c.path}'), ${c.maxLength}))) WHERE ${where};`
+        `(column "${c.name}"). Fix, e.g. (keeps the original under data.${keep}):\n` +
+        `      UPDATE "${t}" SET data = jsonb_set(jsonb_set(data, '{${keep}}', data #> '${c.path}'), ` +
+        `'${c.path}', to_jsonb(left(BTRIM(data #>> '${c.path}'), ${c.maxLength}))) ` +
+        `WHERE ${where} AND NOT data ? '${keep}';`
       );
     })
     .join("\n");

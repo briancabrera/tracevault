@@ -46,7 +46,8 @@ describe("integration / bootstrap", () => {
        (gen_random_uuid(), 'a', jsonb_build_object('outcome', repeat('o', 65)), 'sync', NOW()),
        (gen_random_uuid(), 'b', jsonb_build_object('error', jsonb_build_object('code', repeat('c', 256))), 'sync', NOW()),
        (gen_random_uuid(), 'c', jsonb_build_object('outcome', '  ' || repeat('o', 64) || '  '), 'sync', NOW()),
-       (gen_random_uuid(), 'd', jsonb_build_object('outcome', jsonb_build_object('nested', repeat('n', 80))), 'sync', NOW())`,
+       (gen_random_uuid(), 'd', jsonb_build_object('outcome', jsonb_build_object('nested', repeat('n', 80))), 'sync', NOW()),
+       (gen_random_uuid(), 'e', jsonb_build_object('outcome', repeat('o', 65), 'tracevault_original_outcome', 'mine'), 'sync', NOW())`,
     );
 
     const err = await start(table).then(
@@ -55,22 +56,29 @@ describe("integration / bootstrap", () => {
     );
     expect(err).toBeInstanceOf(SchemaUpgradeError);
     const message = (err as Error).message;
-    expect(message).toContain(`2 row(s) with data#>>'{outcome}' longer than 64`);
+    expect(message).toContain(`3 row(s) with data#>>'{outcome}' longer than 64`);
     expect(message).toContain(`1 row(s) with data#>>'{error,code}' longer than 255`);
     expect(message).not.toContain("severity");
 
-    // The suggested fixes are valid SQL and unblock the upgrade.
+    // The suggested fixes are valid SQL and keep the originals, including objects.
     for (const fix of message.match(/UPDATE .*;/g)!) await db.query(fix);
-    // The original values survive next to the truncated ones, including objects.
     const kept = await db.query(
-      `SELECT event, data->'outcome_original' AS o, data->'error'->'code_original' AS c
-       FROM "${table}" WHERE event IN ('a', 'b', 'd') ORDER BY event`,
+      `SELECT event, data->'tracevault_original_outcome' AS o, data->'tracevault_original_error_code' AS c
+       FROM "${table}" WHERE event IN ('a', 'b', 'd', 'e') ORDER BY event`,
     );
     expect(kept.rows).toEqual([
       { event: "a", o: "o".repeat(65), c: null },
       { event: "b", o: null, c: "c".repeat(256) },
       { event: "d", o: { nested: "n".repeat(80) }, c: null },
+      { event: "e", o: "mine", c: null },
     ]);
+    // A row that already uses the backup key is never overwritten, so it still blocks.
+    const again = await start(table).then(
+      (tv) => tv.close().then(() => null),
+      (e: unknown) => e,
+    );
+    expect((again as Error).message).toContain(`1 row(s) with data#>>'{outcome}' longer than 64`);
+    await db.query(`DELETE FROM "${table}" WHERE event = 'e'`);
     const tv = await start(table);
     try {
       expect(await tv.query.count({ outcome: "o".repeat(64) })).toBe(2);
