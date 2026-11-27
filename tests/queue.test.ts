@@ -189,6 +189,41 @@ describe("AsyncQueue", () => {
     await queue.flush();
     expect(processed).toEqual(["a"]);
   });
+
+  it("flush() does not wait for a pending flushIntervalMs timer", async () => {
+    const processed: string[] = [];
+    const queue = new AsyncQueue({
+      batchSize: 10,
+      flushIntervalMs: 60_000,
+      handler: async (record) => {
+        processed.push(record.id);
+      },
+      onError: () => {},
+    });
+    queue.enqueue(makeRecord("a"));
+    const started = Date.now();
+    await queue.close();
+    expect(processed).toEqual(["a"]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("flush() drains records enqueued mid-drain without waiting for the interval", async () => {
+    const processed: string[] = [];
+    const queue: AsyncQueue = new AsyncQueue({
+      batchSize: 1,
+      flushIntervalMs: 60_000,
+      handler: async (record) => {
+        processed.push(record.id);
+        if (record.id === "a") queue.enqueue(makeRecord("b"));
+      },
+      onError: () => {},
+    });
+    queue.enqueue(makeRecord("a"));
+    const started = Date.now();
+    await queue.flush();
+    expect(processed).toEqual(["a", "b"]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe("AsyncQueue — batchHandler", () => {

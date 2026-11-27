@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ValidationError } from "../src/core/errors.js";
-import { assertJsonSerializable } from "../src/core/serialization.js";
+import { assertJsonbSafe, assertJsonSerializable } from "../src/core/serialization.js";
 
 describe("assertJsonSerializable", () => {
   it("accepts plain objects with primitives and Dates", () => {
@@ -73,5 +73,13 @@ describe("assertJsonSerializable", () => {
       expect(err).toBeInstanceOf(ValidationError);
       expect((err as Error).message).toContain("data.a.b[0].c");
     }
+  });
+
+  it("assertJsonbSafe rejects strings PostgreSQL jsonb cannot store", () => {
+    expect(() => assertJsonbSafe({ s: "a\u0000b" }, "data")).toThrow(/NUL/);
+    expect(() => assertJsonbSafe({ ["k\u0000"]: 1 }, "data")).toThrow(/NUL/);
+    expect(() => assertJsonbSafe({ s: "\ud800" }, "data")).toThrow(/surrogate/);
+    expect(() => assertJsonbSafe({ s: ["x\udc00"] }, "data")).toThrow(/surrogate/);
+    expect(() => assertJsonbSafe({ s: "emoji \ud83d\ude00 ok" }, "data")).not.toThrow();
   });
 });

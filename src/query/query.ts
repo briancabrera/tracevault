@@ -132,15 +132,13 @@ function buildInstance(
   function closeLocal(): Promise<void> {
     if (localClosePromise) return localClosePromise;
     localClosed = true;
+    if (handle) runtime.scopes.delete(handle);
     localClosePromise = Promise.resolve();
     return localClosePromise;
   }
 
-  // Register scopes so root.close() can mark them closed too. As on the
-  // write side, we intentionally never remove the handle from
-  // `runtime.scopes` in scope.close(): root.close() is the single place
-  // that clears the set, so a racing scope.close() can't cause root.close()
-  // to miss a still-valid scope.
+  // Register scopes so root.close() can mark them closed too. A closed
+  // scope has nothing left to drain, so scope.close() drops its handle.
   const handle: InternalScopeHandle | null = opts.isRoot ? null : { close: closeLocal };
   if (handle) runtime.scopes.add(handle);
 

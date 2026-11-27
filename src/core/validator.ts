@@ -3,12 +3,13 @@ import type {
   AuditDiffEvent,
   AuditEvent,
   AuditTarget,
+  PersistedRecord,
   StartTracevaultOptions,
   TracevaultConfig,
   TracevaultScopeOverrides,
 } from "../types/index.js";
 import { ConfigError, ValidationError } from "./errors.js";
-import { assertJsonSerializable } from "./serialization.js";
+import { assertJsonbSafe, assertJsonSerializable } from "./serialization.js";
 
 const VALID_MODES = new Set(["sync", "async"]);
 const VALID_DRIVERS = new Set(["postgres"]);
@@ -288,6 +289,7 @@ function validateIdentity(value: AuditActor | AuditTarget, field: "actor" | "tar
         `\`${field}.${key}\` must be at most ${MAX_IDENTIFIER_LEN} characters.`,
       );
     }
+    assertNoNul(v, `${field}.${key}`);
   }
 }
 
@@ -318,6 +320,13 @@ function validateOptionalString(value: unknown, field: string, maxLen = MAX_IDEN
   }
   if (value.length > maxLen) {
     throw new ValidationError(`\`${field}\` must be at most ${maxLen} characters.`);
+  }
+  assertNoNul(value, field);
+}
+
+function assertNoNul(value: string, field: string): void {
+  if (value.includes("\u0000")) {
+    throw new ValidationError(`\`${field}\` must not contain NUL characters.`);
   }
 }
 
@@ -494,4 +503,10 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
       );
     }
   }
+}
+
+/** Checks the masked payload of a normalized record before it is persisted. */
+export function validatePersistedPayload(record: PersistedRecord): void {
+  if (record.data) assertJsonbSafe(record.data, "data");
+  if (record.meta) assertJsonbSafe(record.meta, "meta");
 }

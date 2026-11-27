@@ -34,6 +34,7 @@ export class AsyncQueue {
   private readonly buffer: PersistedRecord[] = [];
   private readonly opts: AsyncQueueOptions;
   private processing = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private closingPromise: Promise<void> | null = null;
   private drainPromise: Promise<void> | null = null;
@@ -69,6 +70,13 @@ export class AsyncQueue {
     this.drainPromise = new Promise<void>((resolve) => {
       this.drainResolve = resolve;
     });
+    if (this.timer) {
+      // A waiting flush must not sit behind the (unref'd) interval timer,
+      // or the process can exit before the buffer is written.
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.processing = false;
+    }
     this.schedule();
     return this.drainPromise;
   }
@@ -90,8 +98,12 @@ export class AsyncQueue {
       void this.drain();
     };
 
-    if (this.opts.flushIntervalMs > 0) {
-      setTimeout(run, this.opts.flushIntervalMs).unref?.();
+    if (this.opts.flushIntervalMs > 0 && !this.drainResolve) {
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        run();
+      }, this.opts.flushIntervalMs);
+      this.timer.unref?.();
     } else {
       setImmediate(run);
     }

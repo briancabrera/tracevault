@@ -41,6 +41,25 @@ beforeEach(() => {
 });
 
 describe("createTracevault", () => {
+  it("rejects jsonb-unsafe strings in the payload, unless they are masked", async () => {
+    const audit = createTracevault({
+      driver: "postgres",
+      connectionString: "postgres://localhost/x",
+      maskFields: ["token"],
+    });
+    await expect(audit.emit({ event: "e", data: { note: "a\u0000b" } })).rejects.toThrow(
+      ValidationError,
+    );
+    await expect(
+      audit.emitDiff({ event: "e", before: { note: "\ud800" }, after: {} }),
+    ).rejects.toThrow(ValidationError);
+    await expect(audit.emit({ event: "e", data: { token: "a\u0000b" } })).resolves.toBeUndefined();
+    await expect(
+      audit.emitDiff({ event: "e", before: { token: "\ud800" }, after: {} }),
+    ).resolves.toBeUndefined();
+    await audit.close();
+  });
+
   it("rejects invalid config", () => {
     expect(() =>
       createTracevault({

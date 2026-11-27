@@ -225,6 +225,15 @@ describe("validateEvent", () => {
   });
 });
 
+describe("validateEvent — values PostgreSQL would reject", () => {
+  it("rejects NUL characters in identifiers", () => {
+    expect(() => validateEvent({ event: "e", correlationId: "c\u0000" })).toThrow(ValidationError);
+    expect(() => validateEvent({ event: "e", actor: { id: "a\u0000", type: "user" } })).toThrow(
+      ValidationError,
+    );
+  });
+});
+
 describe("assertValidTableName", () => {
   it("accepts typical valid names", () => {
     expect(() => assertValidTableName("audit_logs", "ctx")).not.toThrow();

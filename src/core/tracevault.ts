@@ -18,6 +18,7 @@ import {
   validateConfig,
   validateDiffEvent,
   validateEvent,
+  validatePersistedPayload,
   validateScopeOverrides,
 } from "./validator.js";
 
@@ -203,16 +204,14 @@ function buildInstance(
     localClosePromise = (async () => {
       await queue.close();
       await driver.close();
+      if (handle) runtime.scopes.delete(handle);
     })();
     return localClosePromise;
   }
 
-  // Register scopes so root.close() can drain them too. We intentionally
-  // never remove the handle from `runtime.scopes` in scope.close(): if a
-  // scope's own close() is racing the root's close(), the root must still
-  // be able to `await` the scope's drain before calling `pool.end()`. The
-  // handle is cleaned up in one place only — root.close() — via a
-  // `runtime.scopes.clear()`.
+  // Register scopes so root.close() can drain them too. scope.close() only
+  // removes the handle after its drain finishes: a root.close() racing it
+  // must still find the handle and `await` that drain before `pool.end()`.
   const handle: InternalScopeHandle | null = opts.isRoot ? null : { close: closeLocal };
   if (handle) runtime.scopes.add(handle);
 
@@ -221,6 +220,7 @@ function buildInstance(
       assertOpen();
       validateEvent(event);
       const record = normalizeEvent(event, normalizeOpts);
+      validatePersistedPayload(record);
       await persist(record);
     },
 
@@ -228,6 +228,7 @@ function buildInstance(
       assertOpen();
       validateDiffEvent(event);
       const record = normalizeDiffEvent(event, normalizeOpts);
+      validatePersistedPayload(record);
       await persist(record);
     },
 

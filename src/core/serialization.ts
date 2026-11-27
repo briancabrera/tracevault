@@ -88,6 +88,42 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
   throw new ValidationError(`\`${path}\` has an unsupported type: ${t}.`);
 }
 
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+/**
+ * PostgreSQL `jsonb` rejects NUL (`\u0000`) and unpaired UTF-16 surrogates in
+ * keys and string values. Run on the masked payload, after
+ * `assertJsonSerializable`.
+ */
+export function assertJsonbSafe(value: unknown, path: string): void {
+  if (typeof value === "string") {
+    assertJsonbSafeString(value, path);
+    return;
+  }
+  if (value === null || typeof value !== "object" || value instanceof Date) return;
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => assertJsonbSafe(v, `${path}[${i}]`));
+    return;
+  }
+  for (const [key, v] of Object.entries(value)) {
+    assertJsonbSafeString(key, `${path} key ${JSON.stringify(key)}`);
+    assertJsonbSafe(v, `${path}.${key}`);
+  }
+}
+
+function assertJsonbSafeString(value: string, path: string): void {
+  if (value.includes("\u0000")) {
+    throw new ValidationError(
+      `\`${path}\` contains a NUL character (\\u0000), which PostgreSQL cannot store.`,
+    );
+  }
+  if (LONE_SURROGATE.test(value)) {
+    throw new ValidationError(
+      `\`${path}\` contains an unpaired UTF-16 surrogate, which PostgreSQL cannot store.`,
+    );
+  }
+}
+
 function describeType(obj: object): string {
   const name = obj.constructor?.name;
   if (name && name !== "Object") return name;
