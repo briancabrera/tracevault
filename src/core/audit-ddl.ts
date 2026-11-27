@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { SchemaUpgradeError } from "./errors.js";
 import { assertValidTableName } from "./validator.js";
 
 /** PostgreSQL truncates identifiers longer than this (NAMEDATALEN - 1). */
@@ -26,28 +27,27 @@ export function auditIndexName(tableName: string, suffix: string): string {
 
 interface GeneratedColumn {
   name: string;
+  /** Path of the source value inside `data`, as a `#>>` text-array literal. */
+  path: string;
+  maxLength: number;
   definition: string;
 }
 
+function generatedColumn(name: string, path: string, maxLength: number): GeneratedColumn {
+  return {
+    name,
+    path,
+    maxLength,
+    definition: `VARCHAR(${maxLength}) GENERATED ALWAYS AS (
+    NULLIF(BTRIM(${path === "{error,code}" ? "data->'error'->>'code'" : `data->>'${name}'`}), '')
+  ) STORED`,
+  };
+}
+
 const GENERATED_COLUMNS: readonly GeneratedColumn[] = [
-  {
-    name: "outcome",
-    definition: `VARCHAR(64) GENERATED ALWAYS AS (
-    NULLIF(BTRIM(data->>'outcome'), '')
-  ) STORED`,
-  },
-  {
-    name: "error_code",
-    definition: `VARCHAR(255) GENERATED ALWAYS AS (
-    NULLIF(BTRIM(data->'error'->>'code'), '')
-  ) STORED`,
-  },
-  {
-    name: "severity",
-    definition: `VARCHAR(32) GENERATED ALWAYS AS (
-    NULLIF(BTRIM(data->>'severity'), '')
-  ) STORED`,
-  },
+  generatedColumn("outcome", "{outcome}", 64),
+  generatedColumn("error_code", "{error,code}", 255),
+  generatedColumn("severity", "{severity}", 32),
 ];
 
 function createTableStatement(t: string): string {
@@ -136,6 +136,7 @@ export async function ensureAuditTableSchema(
   const existing = new Set((rows as Array<{ attname: string }>).map((r) => r.attname));
   const missing = GENERATED_COLUMNS.filter((c) => !existing.has(c.name));
   if (missing.length > 0) {
+    await assertNoOversizedValues(executor, t, missing);
     await executor.query(
       `ALTER TABLE "${t}"\n` +
         missing.map((c) => `  ADD COLUMN IF NOT EXISTS ${c.name} ${c.definition}`).join(",\n"),
@@ -147,6 +148,44 @@ export async function ensureAuditTableSchema(
   for (const stmt of indexStatements(t)) {
     await executor.query(stmt);
   }
+}
+
+/**
+ * Rows written before the generated columns existed may hold values longer
+ * than the new VARCHAR, which would make `ADD COLUMN` fail with a bare
+ * "value too long". Detect them first and explain how to fix them.
+ */
+async function assertNoOversizedValues(
+  executor: SqlExecutor,
+  t: string,
+  columns: readonly GeneratedColumn[],
+): Promise<void> {
+  const counts = columns
+    .map(
+      (c) =>
+        `count(*) FILTER (WHERE length(BTRIM(data #>> '${c.path}')) > ${c.maxLength}) AS "${c.name}"`,
+    )
+    .join(", ");
+  const { rows } = await executor.query(`SELECT ${counts} FROM "${t}"`);
+  const found = (rows[0] ?? {}) as Record<string, string | number>;
+  const problems = columns.filter((c) => Number(found[c.name]) > 0);
+  if (problems.length === 0) return;
+
+  const detail = problems
+    .map((c) => {
+      const where = `length(BTRIM(data #>> '${c.path}')) > ${c.maxLength}`;
+      return (
+        `  - ${Number(found[c.name])} row(s) with data#>>'${c.path}' longer than ${c.maxLength} chars ` +
+        `(column "${c.name}"). Fix, e.g.:\n` +
+        `      UPDATE "${t}" SET data = jsonb_set(data, '${c.path}', ` +
+        `to_jsonb(left(BTRIM(data #>> '${c.path}'), ${c.maxLength}))) WHERE ${where};`
+      );
+    })
+    .join("\n");
+  throw new SchemaUpgradeError(
+    `Tracevault: cannot add generated columns to "${t}"; existing rows hold values that do not fit:\n` +
+      `${detail}\nNo schema change was applied.`,
+  );
 }
 
 /**
