@@ -23,11 +23,7 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
 
   const t = typeof value;
 
-  if (t === "boolean") return;
-  if (t === "string") {
-    assertJsonbSafeString(value as string, path);
-    return;
-  }
+  if (t === "string" || t === "boolean") return;
 
   if (t === "number") {
     if (!Number.isFinite(value as number)) {
@@ -37,9 +33,7 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
   }
 
   if (t === "undefined") {
-    throw new ValidationError(
-      `\`${path}\` contains \`undefined\`, which is not JSON-serializable.`,
-    );
+    throw new ValidationError(`\`${path}\` contains \`undefined\`, which is not JSON-serializable.`);
   }
 
   if (t === "bigint") {
@@ -80,11 +74,12 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
     // they serialize to `{}` via JSON.stringify which is a silent data loss.
     const proto = Object.getPrototypeOf(obj);
     if (proto !== Object.prototype && proto !== null) {
-      throw new ValidationError(`\`${path}\` must be a plain object; got ${describeType(obj)}.`);
+      throw new ValidationError(
+        `\`${path}\` must be a plain object; got ${describeType(obj)}.`,
+      );
     }
 
     for (const key of Object.keys(obj as Record<string, unknown>)) {
-      assertJsonbSafeString(key, `${path} key ${JSON.stringify(key)}`);
       walk((obj as Record<string, unknown>)[key], `${path}.${key}`, visited);
     }
     return;
@@ -95,7 +90,27 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
 
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 
-/** PostgreSQL `jsonb` rejects NUL (`\u0000`) and unpaired UTF-16 surrogates. */
+/**
+ * PostgreSQL `jsonb` rejects NUL (`\u0000`) and unpaired UTF-16 surrogates in
+ * keys and string values. Run on the masked payload, after
+ * `assertJsonSerializable`.
+ */
+export function assertJsonbSafe(value: unknown, path: string): void {
+  if (typeof value === "string") {
+    assertJsonbSafeString(value, path);
+    return;
+  }
+  if (value === null || typeof value !== "object" || value instanceof Date) return;
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => assertJsonbSafe(v, `${path}[${i}]`));
+    return;
+  }
+  for (const [key, v] of Object.entries(value)) {
+    assertJsonbSafeString(key, `${path} key ${JSON.stringify(key)}`);
+    assertJsonbSafe(v, `${path}.${key}`);
+  }
+}
+
 function assertJsonbSafeString(value: string, path: string): void {
   if (value.includes("\u0000")) {
     throw new ValidationError(

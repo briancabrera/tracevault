@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ValidationError } from "../src/core/errors.js";
-import { assertJsonSerializable } from "../src/core/serialization.js";
+import { assertJsonbSafe, assertJsonSerializable } from "../src/core/serialization.js";
 
 describe("assertJsonSerializable", () => {
   it("accepts plain objects with primitives and Dates", () => {
@@ -62,9 +62,7 @@ describe("assertJsonSerializable", () => {
   });
 
   it("rejects invalid Date", () => {
-    expect(() => assertJsonSerializable({ d: new Date("invalid") }, "data")).toThrow(
-      /invalid Date/,
-    );
+    expect(() => assertJsonSerializable({ d: new Date("invalid") }, "data")).toThrow(/invalid Date/);
   });
 
   it("points at the offending path in the error message", () => {
@@ -77,11 +75,11 @@ describe("assertJsonSerializable", () => {
     }
   });
 
-  it("rejects strings PostgreSQL jsonb cannot store", () => {
-    expect(() => assertJsonSerializable({ s: "a\u0000b" }, "data")).toThrow(/NUL/);
-    expect(() => assertJsonSerializable({ ["k\u0000"]: 1 }, "data")).toThrow(/NUL/);
-    expect(() => assertJsonSerializable({ s: "\ud800" }, "data")).toThrow(/surrogate/);
-    expect(() => assertJsonSerializable({ s: ["x\udc00"] }, "data")).toThrow(/surrogate/);
-    expect(() => assertJsonSerializable({ s: "emoji \ud83d\ude00 ok" }, "data")).not.toThrow();
+  it("assertJsonbSafe rejects strings PostgreSQL jsonb cannot store", () => {
+    expect(() => assertJsonbSafe({ s: "a\u0000b" }, "data")).toThrow(/NUL/);
+    expect(() => assertJsonbSafe({ ["k\u0000"]: 1 }, "data")).toThrow(/NUL/);
+    expect(() => assertJsonbSafe({ s: "\ud800" }, "data")).toThrow(/surrogate/);
+    expect(() => assertJsonbSafe({ s: ["x\udc00"] }, "data")).toThrow(/surrogate/);
+    expect(() => assertJsonbSafe({ s: "emoji \ud83d\ude00 ok" }, "data")).not.toThrow();
   });
 });

@@ -18,6 +18,7 @@ import {
   validateConfig,
   validateDiffEvent,
   validateEvent,
+  validatePersistedPayload,
   validateScopeOverrides,
 } from "./validator.js";
 
@@ -219,6 +220,7 @@ function buildInstance(
       assertOpen();
       validateEvent(event);
       const record = normalizeEvent(event, normalizeOpts);
+      validatePersistedPayload(record);
       await persist(record);
     },
 
@@ -226,6 +228,7 @@ function buildInstance(
       assertOpen();
       validateDiffEvent(event);
       const record = normalizeDiffEvent(event, normalizeOpts);
+      validatePersistedPayload(record);
       await persist(record);
     },
 

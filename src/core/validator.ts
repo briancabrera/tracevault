@@ -3,12 +3,13 @@ import type {
   AuditDiffEvent,
   AuditEvent,
   AuditTarget,
+  PersistedRecord,
   StartTracevaultOptions,
   TracevaultConfig,
   TracevaultScopeOverrides,
 } from "../types/index.js";
 import { ConfigError, ValidationError } from "./errors.js";
-import { assertJsonSerializable } from "./serialization.js";
+import { assertJsonbSafe, assertJsonSerializable } from "./serialization.js";
 
 const VALID_MODES = new Set(["sync", "async"]);
 const VALID_DRIVERS = new Set(["postgres"]);
@@ -195,10 +196,7 @@ export function validateScopeOverrides(overrides: unknown): void {
     assertValidTableName(o.tableName, "Tracevault scope");
   }
 
-  if (
-    o.defaultMode !== undefined &&
-    (typeof o.defaultMode !== "string" || !VALID_MODES.has(o.defaultMode))
-  ) {
+  if (o.defaultMode !== undefined && (typeof o.defaultMode !== "string" || !VALID_MODES.has(o.defaultMode))) {
     throw new ConfigError(
       `Tracevault scope: \`defaultMode\` must be "sync" or "async", got "${String(o.defaultMode)}".`,
     );
@@ -241,7 +239,9 @@ function assertValidMaskFields(value: unknown, context: string): void {
   }
   for (const field of value) {
     if (typeof field !== "string" || field.length === 0) {
-      throw new ConfigError(`${context}: every \`maskFields\` entry must be a non-empty string.`);
+      throw new ConfigError(
+        `${context}: every \`maskFields\` entry must be a non-empty string.`,
+      );
     }
   }
 }
@@ -330,42 +330,6 @@ function assertNoNul(value: string, field: string): void {
   }
 }
 
-/**
- * Max lengths of the generated columns derived from `data` (sql/002, sql/003).
- * A longer value makes PostgreSQL reject the whole INSERT.
- */
-const GENERATED_FIELD_LIMITS: ReadonlyArray<{
-  path: string;
-  read: (d: Record<string, unknown>) => unknown;
-  max: number;
-}> = [
-  { path: "data.outcome", read: (d) => d.outcome, max: 64 },
-  {
-    path: "data.error.code",
-    read: (d) => {
-      const e = d.error;
-      return e && typeof e === "object" && !Array.isArray(e)
-        ? (e as Record<string, unknown>).code
-        : undefined;
-    },
-    max: 255,
-  },
-  { path: "data.severity", read: (d) => d.severity, max: 32 },
-];
-
-function validateGeneratedFields(data: Record<string, unknown> | null | undefined): void {
-  if (!data) return;
-  for (const { path, read, max } of GENERATED_FIELD_LIMITS) {
-    const v = read(data);
-    if (typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") continue;
-    // Matches the column expression: BTRIM (spaces only), length in code points.
-    const len = Array.from(String(v).replace(/^ +| +$/g, "")).length;
-    if (len > max) {
-      throw new ValidationError(`\`${path}\` must be at most ${max} characters (got ${len}).`);
-    }
-  }
-}
-
 function validatePlainObjectField(value: unknown, field: string): void {
   if (value === undefined || value === null) return;
   if (typeof value !== "object" || Array.isArray(value)) {
@@ -398,7 +362,6 @@ export function validateEvent(event: AuditEvent): void {
   validateOptionalString(event.requestId, "requestId");
   validateOptionalString(event.environment, "environment", MAX_ENVIRONMENT_LEN);
   validatePlainObjectField(event.data, "data");
-  validateGeneratedFields(event.data);
   validatePlainObjectField(event.meta, "meta");
 }
 
@@ -433,10 +396,7 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
     );
   }
 
-  if (
-    typeof options.connectionString !== "string" ||
-    options.connectionString.trim().length === 0
-  ) {
+  if (typeof options.connectionString !== "string" || options.connectionString.trim().length === 0) {
     throw new ConfigError(
       "startTracevault: `connectionString` is required and must be a non-empty string.",
     );
@@ -502,9 +462,7 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
     assertValidScopeName(key, `startTracevault.scopes["${key}"]`);
     const entry = (options.scopes as Record<string, unknown>)[key];
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new ConfigError(
-        `startTracevault.scopes["${key}"] must be an object with { tableName }.`,
-      );
+      throw new ConfigError(`startTracevault.scopes["${key}"] must be an object with { tableName }.`);
     }
     const tableName = (entry as { tableName?: unknown }).tableName;
     assertValidTableName(tableName, `startTracevault.scopes["${key}"].tableName`);
@@ -545,4 +503,10 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
       );
     }
   }
+}
+
+/** Checks the masked payload of a normalized record before it is persisted. */
+export function validatePersistedPayload(record: PersistedRecord): void {
+  if (record.data) assertJsonbSafe(record.data, "data");
+  if (record.meta) assertJsonbSafe(record.meta, "meta");
 }

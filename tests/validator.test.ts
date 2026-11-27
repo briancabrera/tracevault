@@ -59,9 +59,9 @@ describe("validateConfig", () => {
       ConfigError,
     );
     expect(() => validateConfig({ ...baseConfig(), tableName: "" })).toThrow(ConfigError);
-    expect(() => validateConfig({ ...baseConfig(), tableName: "a".repeat(64) })).toThrow(
-      ConfigError,
-    );
+    expect(() =>
+      validateConfig({ ...baseConfig(), tableName: "a".repeat(64) }),
+    ).toThrow(ConfigError);
   });
 
   it("rejects invalid defaultMode", () => {
@@ -86,15 +86,15 @@ describe("validateConfig", () => {
   });
 
   it("rejects non-string maskValue", () => {
-    expect(() => validateConfig({ ...baseConfig(), maskValue: 42 as unknown as string })).toThrow(
-      ConfigError,
-    );
+    expect(() =>
+      validateConfig({ ...baseConfig(), maskValue: 42 as unknown as string }),
+    ).toThrow(ConfigError);
   });
 
   it("rejects non-string environment", () => {
-    expect(() => validateConfig({ ...baseConfig(), environment: 1 as unknown as string })).toThrow(
-      ConfigError,
-    );
+    expect(() =>
+      validateConfig({ ...baseConfig(), environment: 1 as unknown as string }),
+    ).toThrow(ConfigError);
   });
 
   it("rejects non-function onError", () => {
@@ -172,12 +172,12 @@ describe("validateEvent", () => {
 
   it("rejects invalid occurredAt", () => {
     expect(() => validateEvent({ event: "x", occurredAt: "not-a-date" })).toThrow(ValidationError);
-    expect(() => validateEvent({ event: "x", occurredAt: new Date("invalid") })).toThrow(
-      ValidationError,
-    );
-    expect(() => validateEvent({ event: "x", occurredAt: 123 as unknown as string })).toThrow(
-      ValidationError,
-    );
+    expect(() =>
+      validateEvent({ event: "x", occurredAt: new Date("invalid") }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateEvent({ event: "x", occurredAt: 123 as unknown as string }),
+    ).toThrow(ValidationError);
   });
 
   it("rejects non-object data", () => {
@@ -191,9 +191,9 @@ describe("validateEvent", () => {
   });
 
   it("rejects non-serializable data (BigInt, function, circular)", () => {
-    expect(() => validateEvent({ event: "x", data: { big: 1n as unknown as number } })).toThrow(
-      ValidationError,
-    );
+    expect(() =>
+      validateEvent({ event: "x", data: { big: 1n as unknown as number } }),
+    ).toThrow(ValidationError);
     expect(() =>
       validateEvent({
         event: "x",
@@ -216,12 +216,12 @@ describe("validateEvent", () => {
   });
 
   it("rejects optional strings that are not strings", () => {
-    expect(() => validateEvent({ event: "x", correlationId: 42 as unknown as string })).toThrow(
-      ValidationError,
-    );
-    expect(() => validateEvent({ event: "x", requestId: "" as unknown as string })).toThrow(
-      ValidationError,
-    );
+    expect(() =>
+      validateEvent({ event: "x", correlationId: 42 as unknown as string }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateEvent({ event: "x", requestId: "" as unknown as string }),
+    ).toThrow(ValidationError);
   });
 });
 
@@ -231,28 +231,6 @@ describe("validateEvent — values PostgreSQL would reject", () => {
     expect(() => validateEvent({ event: "e", actor: { id: "a\u0000", type: "user" } })).toThrow(
       ValidationError,
     );
-  });
-
-  it("enforces the generated-column limits on data.outcome, data.error.code and data.severity", () => {
-    expect(() => validateEvent({ event: "e", data: { outcome: "x".repeat(64) } })).not.toThrow();
-    expect(() => validateEvent({ event: "e", data: { outcome: "x".repeat(65) } })).toThrow(
-      /data\.outcome/,
-    );
-    expect(() => validateEvent({ event: "e", data: { error: { code: "x".repeat(256) } } })).toThrow(
-      /data\.error\.code/,
-    );
-    expect(() => validateEvent({ event: "e", data: { severity: "x".repeat(33) } })).toThrow(
-      /data\.severity/,
-    );
-  });
-
-  it("measures generated fields like PostgreSQL: trimmed, in code points", () => {
-    expect(() =>
-      validateEvent({ event: "e", data: { outcome: `  ${"x".repeat(64)}  ` } }),
-    ).not.toThrow();
-    expect(() =>
-      validateEvent({ event: "e", data: { severity: "\u{1F600}".repeat(32) } }),
-    ).not.toThrow();
   });
 });
 
@@ -270,7 +248,9 @@ describe("assertValidTableName", () => {
     expect(() => assertValidTableName("a".repeat(64), "ctx")).toThrow(ConfigError);
     expect(() => assertValidTableName("", "ctx")).toThrow(ConfigError);
     expect(() => assertValidTableName("bad-name", "ctx")).toThrow(ConfigError);
-    expect(() => assertValidTableName(42 as unknown as string, "ctx")).toThrow(ConfigError);
+    expect(() => assertValidTableName(42 as unknown as string, "ctx")).toThrow(
+      ConfigError,
+    );
   });
 });
 
@@ -288,12 +268,12 @@ describe("validateScopeOverrides", () => {
   });
 
   it("rejects driver / connectionString explicitly", () => {
-    expect(() => validateScopeOverrides({ driver: "postgres" } as unknown)).toThrow(
-      /cannot be overridden/,
-    );
-    expect(() => validateScopeOverrides({ connectionString: "x" } as unknown)).toThrow(
-      /cannot be overridden/,
-    );
+    expect(() =>
+      validateScopeOverrides({ driver: "postgres" } as unknown),
+    ).toThrow(/cannot be overridden/);
+    expect(() =>
+      validateScopeOverrides({ connectionString: "x" } as unknown),
+    ).toThrow(/cannot be overridden/);
   });
 
   it("rejects unknown keys", () => {
@@ -319,23 +299,25 @@ describe("validateScopeOverrides", () => {
 
   it("applies field-level validation for each override", () => {
     expect(() => validateScopeOverrides({ tableName: "bad-name" })).toThrow(ConfigError);
-    expect(() => validateScopeOverrides({ defaultMode: "fire" as unknown as "sync" })).toThrow(
-      ConfigError,
-    );
-    expect(() => validateScopeOverrides({ maskFields: "password" as unknown as string[] })).toThrow(
-      ConfigError,
-    );
-    expect(() => validateScopeOverrides({ maskValue: 42 as unknown as string })).toThrow(
-      ConfigError,
-    );
-    expect(() => validateScopeOverrides({ environment: 1 as unknown as string })).toThrow(
-      ConfigError,
-    );
-    expect(() => validateScopeOverrides({ onError: "nope" as unknown as () => void })).toThrow(
-      ConfigError,
-    );
+    expect(() =>
+      validateScopeOverrides({ defaultMode: "fire" as unknown as "sync" }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ maskFields: "password" as unknown as string[] }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ maskValue: 42 as unknown as string }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ environment: 1 as unknown as string }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateScopeOverrides({ onError: "nope" as unknown as () => void }),
+    ).toThrow(ConfigError);
     expect(() => validateScopeOverrides({ asyncBatchSize: 0 })).toThrow(ConfigError);
-    expect(() => validateScopeOverrides({ asyncFlushIntervalMs: -1 })).toThrow(ConfigError);
+    expect(() => validateScopeOverrides({ asyncFlushIntervalMs: -1 })).toThrow(
+      ConfigError,
+    );
   });
 });
 
