@@ -469,8 +469,29 @@ Unknown keys are rejected with `ValidationError` so typos never silently
 widen the result set. `from > to` is rejected eagerly for the same reason.
 
 Ordering is always `ORDER BY occurred_at <dir>, id <dir>`: the UUID id
-breaks ties so pagination is deterministic at a given point in time. Under
-concurrent writes, prefer bounding the query with a `from`/`to` window.
+breaks ties so pagination is deterministic at a given point in time. With
+`offset`, rows written between two requests shift later pages; use
+`findPage` to walk large or live result sets.
+
+### Cursor pagination (`findPage`)
+
+`findPage(filters)` takes the same filters as `findMany`, with an opaque
+`cursor` instead of `offset`, and returns `{ items, nextCursor }`.
+`nextCursor` is `null` on the last page.
+
+```ts
+let cursor: string | null = null;
+do {
+  const page = await audit.query.findPage({ event: "user.login", limit: 200, cursor });
+  for (const row of page.items) handle(row);
+  cursor = page.nextCursor;
+} while (cursor);
+```
+
+Pages continue strictly after the last `(occurred_at, id)` returned, so rows
+written while you page never cause repeats or gaps, and deep pages cost the
+same as the first. Pass the same filters and `order` with each cursor; a
+cursor created with the other `order` is rejected.
 
 ### Scopes on the Read API
 

@@ -1,7 +1,9 @@
 import { ConfigError, ValidationError } from "../core/errors.js";
 import { assertValidTableName, assertPgPoolLike } from "../core/validator.js";
+import { decodeCursor, type PageCursor } from "./cursor.js";
 import type {
   AuditCountFilters,
+  AuditPageFilters,
   AuditQueryFilters,
   TracevaultQueryConfig,
   TracevaultQueryScopeOverrides,
@@ -302,6 +304,37 @@ export function validateAndNormalizeFilters(
   }
 
   return { ...base, limit, offset, order };
+}
+
+export interface NormalizedPageFilters extends Omit<NormalizedQueryFilters, "offset"> {
+  cursor: PageCursor | null;
+}
+
+export function validateAndNormalizePageFilters(
+  filters: AuditPageFilters | undefined,
+): NormalizedPageFilters {
+  if (filters === undefined || filters === null) {
+    const { offset: _offset, ...rest } = defaultNormalized();
+    return { ...rest, cursor: null };
+  }
+  if (typeof filters !== "object" || Array.isArray(filters)) {
+    throw new ValidationError("Filters must be a plain object.");
+  }
+  if (Object.prototype.hasOwnProperty.call(filters, "offset")) {
+    throw new ValidationError("`findPage` paginates with `cursor`, not `offset`.");
+  }
+  const { cursor: rawCursor, ...rest } = filters;
+  const { offset: _offset, ...normalized } = validateAndNormalizeFilters(rest);
+  let cursor: PageCursor | null = null;
+  if (rawCursor !== undefined && rawCursor !== null) {
+    cursor = decodeCursor(rawCursor);
+    if (cursor.order !== normalized.order) {
+      throw new ValidationError(
+        `\`cursor\` was created with order "${cursor.order}"; pass the same \`order\`.`,
+      );
+    }
+  }
+  return { ...normalized, cursor };
 }
 
 export function validateAndNormalizeCountFilters(
