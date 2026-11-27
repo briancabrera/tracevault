@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -93,32 +94,36 @@ describe("integration / immutable audit tables", () => {
 
   it("bootstraps when another role owns the shared trigger function", async () => {
     const table = "audit_tv_imm_other_owner";
+    const role = "tv_imm_app";
+    const password = randomUUID();
     await db.query(`DROP TABLE IF EXISTS "${table}"`);
-    await db.query(`DROP FUNCTION IF EXISTS tracevault_reject_mutation() CASCADE`);
-    await db.query(`DROP ROLE IF EXISTS tv_imm_app`);
-    await db.query(`CREATE ROLE tv_imm_app LOGIN PASSWORD 'tv_imm_app'`);
-    await db.query(`GRANT CREATE, USAGE ON SCHEMA public TO tv_imm_app`);
-    // Installed first by the superuser (another "service").
-    await db.query(generateInitSql("audit_tv_imm_first", { immutable: true }));
-    const url = new URL(CONN_STRING);
-    url.username = "tv_imm_app";
-    url.password = "tv_imm_app";
-    const tv = await startTracevault({
-      driver: "postgres",
-      connectionString: url.toString(),
-      defaultScope: "d",
-      scopes: { d: { tableName: table } },
-      bootstrap: { immutable: true },
-    });
+    await db.query(`DROP ROLE IF EXISTS ${role}`);
+    await db.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
     try {
-      await tv.emit({ event: "e" });
+      await db.query(`GRANT CREATE, USAGE ON SCHEMA public TO ${role}`);
+      // The superuser (another "service") owns the shared function.
+      await db.query(generateInitSql("audit_tv_imm_first", { immutable: true }));
+      const url = new URL(CONN_STRING);
+      url.username = role;
+      url.password = password;
+      const tv = await startTracevault({
+        driver: "postgres",
+        connectionString: url.toString(),
+        defaultScope: "d",
+        scopes: { d: { tableName: table } },
+        bootstrap: { immutable: true },
+      });
+      try {
+        await tv.emit({ event: "e" });
+      } finally {
+        await tv.close();
+      }
+      await expectAppendOnly(table);
     } finally {
-      await tv.close();
+      await db.query(`DROP TABLE IF EXISTS "${table}", "audit_tv_imm_first"`);
+      await db.query(`REVOKE ALL ON SCHEMA public FROM ${role}`);
+      await db.query(`DROP ROLE ${role}`);
     }
-    await expectAppendOnly(table);
-    await db.query(`DROP TABLE "${table}", "audit_tv_imm_first"`);
-    await db.query(`REVOKE ALL ON SCHEMA public FROM tv_imm_app`);
-    await db.query(`DROP ROLE tv_imm_app`);
   });
 
   it("rejects immutable without ensureSchema", async () => {
