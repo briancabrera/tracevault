@@ -1,5 +1,7 @@
 import { Pool } from "pg";
 
+import { attachPoolErrorHandler } from "../drivers/postgres/pool-errors.js";
+
 import { DriverError, TracevaultError } from "../core/errors.js";
 import { PostgresReader } from "./reader.js";
 import type {
@@ -74,15 +76,7 @@ export function createTracevaultQuery(config: TracevaultQueryConfig): Tracevault
       connectionString: config.connectionString,
     });
   const endPoolOnClose = config.endPoolOnClose ?? config.pool === undefined;
-  if (!config.pool) {
-    pool.on("error", () => {
-      /* swallow */
-    });
-  } else {
-    pool.on("error", () => {
-      /* swallow */
-    });
-  }
+  attachPoolErrorHandler(pool, config.onPoolError, { injected: config.pool !== undefined });
 
   const runtime: SharedRuntime = {
     pool,

@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bounded async queue** — `asyncMaxQueueSize` (default 10000) caps the events waiting to be written. When it is full, async `emit()` waits for room (`asyncQueueFullBehavior: "wait"`, the default) or drops the event and reports a `QueueFullError` to `onError` (`"drop"`). Before, the queue had no limit: 200k queued events used ~240 MB.
+- **`onPoolError`** — `error` events from the PostgreSQL pool (e.g. an idle connection killed by the server) are now reported, by default with `console.error`. Before, they were silently discarded, including on injected pools that had their own listener.
 - **Cursor pagination** — `query.findPage(filters)` returns `{ items, nextCursor }` using keyset pagination on `(occurred_at, id)`. Pages stay consistent while new rows are written (offset pages shift) and deep pages are as fast as the first.
+
+### Fixed
+
+- **Upgrade with oversized legacy values** — upgrading a `001`-only table whose rows hold `outcome` / `error.code` / `severity` longer than the generated columns allow now fails with `SchemaUpgradeError`, naming the row counts and the fix `UPDATE`, instead of a bare "value too long" from `ALTER TABLE`.
 
 ### Fixed
 

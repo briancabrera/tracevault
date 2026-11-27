@@ -35,3 +35,19 @@ export class DriverError extends TracevaultError {
     this.cause = cause;
   }
 }
+
+/** Passed to `onError` when an async event is dropped because the queue is full. */
+export class QueueFullError extends TracevaultError {
+  constructor(message: string) {
+    super(message);
+    this.name = "QueueFullError";
+  }
+}
+
+/** Schema bootstrap cannot upgrade a table because of existing data. */
+export class SchemaUpgradeError extends TracevaultError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SchemaUpgradeError";
+  }
+}

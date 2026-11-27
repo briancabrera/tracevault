@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 
-import { startTracevault } from "../../src/index.js";
+import { SchemaUpgradeError, startTracevault } from "../../src/index.js";
 import { CONN_STRING, createDbClient } from "./helpers.js";
 
 const SQL_001 = readFileSync(resolve(__dirname, "../../sql/001_init_audit_logs.sql"), "utf8");
@@ -37,6 +37,38 @@ function start(tableName: string) {
 }
 
 describe("integration / bootstrap", () => {
+  it("explains which old rows block the upgrade, and upgrades once they are fixed", async () => {
+    const table = "audit_tv_upgrade_oversized";
+    await db.query(`DROP TABLE IF EXISTS "${table}"`);
+    await db.query(SQL_001.replaceAll("audit_logs", table));
+    await db.query(
+      `INSERT INTO "${table}" (id, event, data, mode, occurred_at) VALUES
+       (gen_random_uuid(), 'a', jsonb_build_object('outcome', repeat('o', 65)), 'sync', NOW()),
+       (gen_random_uuid(), 'b', jsonb_build_object('error', jsonb_build_object('code', repeat('c', 256))), 'sync', NOW()),
+       (gen_random_uuid(), 'c', jsonb_build_object('outcome', '  ' || repeat('o', 64) || '  '), 'sync', NOW())`,
+    );
+
+    const err = await start(table).then(
+      (tv) => tv.close().then(() => null),
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SchemaUpgradeError);
+    const message = (err as Error).message;
+    expect(message).toContain(`1 row(s) with data#>>'{outcome}' longer than 64`);
+    expect(message).toContain(`1 row(s) with data#>>'{error,code}' longer than 255`);
+    expect(message).not.toContain("severity");
+
+    // The suggested fixes are valid SQL and unblock the upgrade.
+    for (const fix of message.match(/UPDATE .*;/g)!) await db.query(fix);
+    const tv = await start(table);
+    try {
+      expect(await tv.query.count({ outcome: "o".repeat(64) })).toBe(2);
+    } finally {
+      await tv.close();
+    }
+    await db.query(`DROP TABLE "${table}"`);
+  });
+
   it("upgrades a table created by sql/001 only (adds generated columns)", async () => {
     const table = "audit_tv_upgrade_001";
     await db.query(`DROP TABLE IF EXISTS "${table}"`);

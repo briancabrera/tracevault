@@ -3,6 +3,7 @@ import { Client, Pool } from "pg";
 import { createTracevaultQuery } from "../query/query.js";
 import type { TracevaultQuery } from "../query/types.js";
 import type { AuditDiffEvent, AuditEvent, StartTracevaultOptions } from "../types/index.js";
+import { attachPoolErrorHandler } from "../drivers/postgres/pool-errors.js";
 import { bootstrapAuditSchema } from "./audit-ddl.js";
 import { ConfigError } from "./errors.js";
 import { createTracevault } from "./tracevault.js";
@@ -41,12 +42,6 @@ function queryFacade(query: TracevaultQuery): TracevaultAppQuery {
     findById: query.findById.bind(query),
     count: query.count.bind(query),
   };
-}
-
-function attachPoolErrorHandler(pool: Pool): void {
-  pool.on("error", () => {
-    /* swallow idle-client errors; per-query errors still propagate */
-  });
 }
 
 /**
@@ -89,9 +84,9 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
     ownsWritePool = false;
   } else {
     writePool = new Pool({ connectionString: options.connectionString });
-    attachPoolErrorHandler(writePool);
     ownsWritePool = true;
   }
+  attachPoolErrorHandler(writePool, options.onPoolError, { injected: !ownsWritePool });
 
   const readCs = options.readConnectionString ?? options.connectionString;
 
@@ -100,13 +95,14 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
   if (options.readPool) {
     readPool = options.readPool;
     ownsReadPool = false;
+    attachPoolErrorHandler(readPool, options.onPoolError, { injected: true });
   } else if (options.pool) {
     readPool = options.pool;
     ownsReadPool = false;
   } else {
     readPool = new Pool({ connectionString: readCs });
-    attachPoolErrorHandler(readPool);
     ownsReadPool = true;
+    attachPoolErrorHandler(readPool, options.onPoolError, { injected: false });
   }
 
   const defaultEntry = options.scopes[options.defaultScope];
@@ -130,6 +126,8 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
     onError: options.onError,
     asyncBatchSize: options.asyncBatchSize,
     asyncFlushIntervalMs: options.asyncFlushIntervalMs,
+    asyncMaxQueueSize: options.asyncMaxQueueSize,
+    asyncQueueFullBehavior: options.asyncQueueFullBehavior,
   });
 
   const reader = createTracevaultQuery({

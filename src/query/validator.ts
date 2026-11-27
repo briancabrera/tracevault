@@ -111,6 +111,10 @@ export function validateQueryConfig(config: TracevaultQueryConfig): void {
     throw new ConfigError("Tracevault query config: `endPoolOnClose` must be a boolean.");
   }
 
+  if (config.onPoolError !== undefined && typeof config.onPoolError !== "function") {
+    throw new ConfigError("Tracevault query config: `onPoolError` must be a function.");
+  }
+
   if (typeof config.connectionString !== "string" || config.connectionString.trim().length === 0) {
     throw new ConfigError(
       "Tracevault query config: `connectionString` is required and must be a non-empty string.",

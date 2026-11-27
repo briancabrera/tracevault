@@ -38,6 +38,8 @@ const ALLOWED_SCOPE_OVERRIDE_KEYS = new Set<keyof TracevaultScopeOverrides>([
   "onError",
   "asyncBatchSize",
   "asyncFlushIntervalMs",
+  "asyncMaxQueueSize",
+  "asyncQueueFullBehavior",
 ]);
 
 /**
@@ -163,6 +165,10 @@ export function validateConfig(config: TracevaultConfig): void {
       );
     }
   }
+  assertValidQueueOptions(config, "Tracevault config");
+  if (config.onPoolError !== undefined && typeof config.onPoolError !== "function") {
+    throw new ConfigError("Tracevault config: `onPoolError` must be a function.");
+  }
 }
 
 /**
@@ -231,6 +237,7 @@ export function validateScopeOverrides(overrides: unknown): void {
       );
     }
   }
+  assertValidQueueOptions(o, "Tracevault scope");
 }
 
 function assertValidMaskFields(value: unknown, context: string): void {
@@ -503,10 +510,28 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
       );
     }
   }
+  assertValidQueueOptions(options, "startTracevault");
+  if (options.onPoolError !== undefined && typeof options.onPoolError !== "function") {
+    throw new ConfigError("startTracevault: `onPoolError` must be a function.");
+  }
 }
 
 /** Checks the masked payload of a normalized record before it is persisted. */
 export function validatePersistedPayload(record: PersistedRecord): void {
   if (record.data) assertJsonbSafe(record.data, "data");
   if (record.meta) assertJsonbSafe(record.meta, "meta");
+}
+
+function assertValidQueueOptions(
+  o: { asyncMaxQueueSize?: unknown; asyncQueueFullBehavior?: unknown },
+  context: string,
+): void {
+  const max = o.asyncMaxQueueSize;
+  if (max !== undefined && max !== Infinity && !(Number.isInteger(max) && (max as number) > 0)) {
+    throw new ConfigError(`${context}: \`asyncMaxQueueSize\` must be a positive integer or Infinity.`);
+  }
+  const whenFull = o.asyncQueueFullBehavior;
+  if (whenFull !== undefined && whenFull !== "wait" && whenFull !== "drop") {
+    throw new ConfigError(`${context}: \`asyncQueueFullBehavior\` must be "wait" or "drop".`);
+  }
 }

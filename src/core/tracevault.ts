@@ -1,9 +1,11 @@
 import { Pool } from "pg";
 
+import { attachPoolErrorHandler } from "../drivers/postgres/pool-errors.js";
 import { PostgresDriver } from "../drivers/postgres/postgres-driver.js";
 import { DriverError, TracevaultError } from "./errors.js";
 import { DEFAULT_MASK_VALUE } from "./masker.js";
 import type {
+  AsyncQueueFullBehavior,
   AuditDiffEvent,
   AuditEvent,
   AuditMode,
@@ -24,6 +26,7 @@ import {
 
 const DEFAULT_TABLE_NAME = "audit_logs";
 const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 
 /**
  * Fully-resolved, normalized settings for a single Tracevault instance
@@ -38,6 +41,8 @@ interface EffectiveConfig {
   onError: (err: Error, record: PersistedRecord) => void;
   asyncBatchSize: number;
   asyncFlushIntervalMs: number;
+  asyncMaxQueueSize: number;
+  asyncQueueFullBehavior: AsyncQueueFullBehavior;
 }
 
 /**
@@ -79,6 +84,8 @@ function effectiveFromConfig(config: TracevaultConfig): EffectiveConfig {
     onError: config.onError ?? DEFAULT_ON_ERROR,
     asyncBatchSize: config.asyncBatchSize ?? DEFAULT_BATCH_SIZE,
     asyncFlushIntervalMs: config.asyncFlushIntervalMs ?? 0,
+    asyncMaxQueueSize: config.asyncMaxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
+    asyncQueueFullBehavior: config.asyncQueueFullBehavior ?? "wait",
   };
 }
 
@@ -97,6 +104,8 @@ function mergeOverrides(
     onError: overrides.onError ?? base.onError,
     asyncBatchSize: overrides.asyncBatchSize ?? base.asyncBatchSize,
     asyncFlushIntervalMs: overrides.asyncFlushIntervalMs ?? base.asyncFlushIntervalMs,
+    asyncMaxQueueSize: overrides.asyncMaxQueueSize ?? base.asyncMaxQueueSize,
+    asyncQueueFullBehavior: overrides.asyncQueueFullBehavior ?? base.asyncQueueFullBehavior,
   };
 }
 
@@ -114,17 +123,7 @@ export function createTracevault(config: TracevaultConfig): Tracevault {
       connectionString: config.connectionString,
     });
   const endPoolOnClose = config.endPoolOnClose ?? config.pool === undefined;
-  if (!config.pool) {
-    // Prevent unhandled 'error' events (pg emits them on idle client failures)
-    // from crashing the process. Per-query errors still surface via `insert()`.
-    pool.on("error", () => {
-      /* swallow; per-query errors still propagate through driver.insert() */
-    });
-  } else {
-    pool.on("error", () => {
-      /* swallow */
-    });
-  }
+  attachPoolErrorHandler(pool, config.onPoolError, { injected: config.pool !== undefined });
 
   const runtime: SharedRuntime = {
     pool,
@@ -157,6 +156,8 @@ function buildInstance(
   const queue = new AsyncQueue({
     batchSize: effective.asyncBatchSize,
     flushIntervalMs: effective.asyncFlushIntervalMs,
+    maxSize: effective.asyncMaxQueueSize,
+    whenFull: effective.asyncQueueFullBehavior,
     handler: (record) => driver.insert(record),
     batchHandler: (records) => driver.insertMany(records),
     onError: effective.onError,
@@ -187,7 +188,7 @@ function buildInstance(
 
   async function persist(record: PersistedRecord): Promise<void> {
     if (record.mode === "async") {
-      queue.enqueue(record);
+      await queue.push(record);
       return;
     }
     await driver.insert(record);
