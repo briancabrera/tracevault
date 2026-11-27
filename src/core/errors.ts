@@ -35,3 +35,11 @@ export class DriverError extends TracevaultError {
     this.cause = cause;
   }
 }
+
+/** Schema bootstrap cannot upgrade a table because of existing data. */
+export class SchemaUpgradeError extends TracevaultError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SchemaUpgradeError";
+  }
+}

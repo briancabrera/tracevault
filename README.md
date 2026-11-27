@@ -89,6 +89,12 @@ adds optional STORED generated columns `outcome` and `error_code` (derived from
 > If you use a custom `tableName`, run **001** with the name substituted, then
 > adapt **002** and **003** (replace `"audit_logs"`) or use `generateInitSql("your_table")`.
 
+When bootstrap upgrades a table created by **001** only, rows written before
+the upgrade must fit the new columns (`outcome` ≤ 64, `error.code` ≤ 255,
+`severity` ≤ 32 chars after trimming). Otherwise `startTracevault` throws
+`SchemaUpgradeError` before changing anything; the message lists the
+offending row counts and an `UPDATE` that truncates them.
+
 ### Append-only tables (optional)
 
 `bootstrap: { immutable: true }` installs triggers on every scope table so
@@ -332,6 +338,7 @@ import { TracevaultError, ConfigError, ValidationError, DriverError } from "trac
 | `ConfigError`      | `startTracevault` receives an invalid configuration.                            |
 | `ValidationError`  | `emit` / `emitDiff` receives an invalid event or a non-JSON-safe payload.        |
 | `DriverError`      | The database driver fails to insert, healthcheck, or close.                      |
+| `SchemaUpgradeError` | `startTracevault` bootstrap cannot upgrade a table because existing rows do not fit new generated columns. |
 | `TracevaultError`  | Base class. Also thrown directly for lifecycle violations (emit after `close()`). |
 
 ## Data model

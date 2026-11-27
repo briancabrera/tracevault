@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Upgrade with oversized legacy values** — upgrading a `001`-only table whose rows hold `outcome` / `error.code` / `severity` longer than the generated columns allow now fails with `SchemaUpgradeError`, naming the row counts and the fix `UPDATE`, instead of a bare "value too long" from `ALTER TABLE`.
+
+### Fixed
+
 - **Upgrading older schemas** — `bootstrap.ensureSchema` now adds the generated `outcome`, `error_code` and `severity` columns to tables created by `sql/001` only. Before, `startTracevault` failed with `column "error_code" does not exist`.
 - **Concurrent startup** — schema bootstrap runs under a PostgreSQL advisory lock, so several replicas starting at once no longer fail with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
 - **Long table names** — index names that would exceed 63 chars now use a shortened, hashed prefix. Before, PostgreSQL truncated them, they collided, and most indexes were silently skipped. Names that already fit are unchanged.
