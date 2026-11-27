@@ -39,7 +39,8 @@ export interface AsyncQueueOptions {
  */
 export class AsyncQueue {
   private readonly buffer: PersistedRecord[] = [];
-  private waiting: Array<{ record: PersistedRecord; resolve: () => void }> = [];
+  /** Admitted slots are cleared to `undefined` so written records can be GC'd. */
+  private waiting: Array<{ record: PersistedRecord; resolve: () => void } | undefined> = [];
   /** Index of the oldest entry in `waiting`; avoids O(n) `shift()` per admit. */
   private waitingHead = 0;
   private readonly maxSize: number;
@@ -163,7 +164,8 @@ export class AsyncQueue {
   /** Moves waiting `push()` calls into the buffer, oldest first, while there is room. */
   private admitWaiting(): void {
     while (this.waitingHead < this.waiting.length && this.buffer.length < this.maxSize) {
-      const next = this.waiting[this.waitingHead++]!;
+      const next = this.waiting[this.waitingHead]!;
+      this.waiting[this.waitingHead++] = undefined;
       this.buffer.push(next.record);
       next.resolve();
     }
