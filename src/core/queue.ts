@@ -39,7 +39,9 @@ export interface AsyncQueueOptions {
  */
 export class AsyncQueue {
   private readonly buffer: PersistedRecord[] = [];
-  private readonly waiting: Array<{ record: PersistedRecord; resolve: () => void }> = [];
+  private waiting: Array<{ record: PersistedRecord; resolve: () => void }> = [];
+  /** Index of the oldest entry in `waiting`; avoids O(n) `shift()` per admit. */
+  private waitingHead = 0;
   private readonly maxSize: number;
   private readonly opts: AsyncQueueOptions;
   private processing = false;
@@ -66,7 +68,7 @@ export class AsyncQueue {
     if (this.closed) {
       throw new Error("Tracevault: cannot enqueue events, queue is closed.");
     }
-    if (this.buffer.length < this.maxSize && this.waiting.length === 0) {
+    if (this.buffer.length < this.maxSize && this.waitingHead === this.waiting.length) {
       this.buffer.push(record);
       this.schedule();
       return Promise.resolve();
@@ -80,9 +82,13 @@ export class AsyncQueue {
       );
       return Promise.resolve();
     }
-    return new Promise<void>((resolve) => {
+    const waiter = new Promise<void>((resolve) => {
       this.waiting.push({ record, resolve });
     });
+    // A full buffer must not sit behind the (unref'd) interval timer: nothing
+    // else may keep the process alive while the producer awaits room.
+    this.drainNow();
+    return waiter;
   }
 
   /**
@@ -95,14 +101,9 @@ export class AsyncQueue {
     this.drainPromise = new Promise<void>((resolve) => {
       this.drainResolve = resolve;
     });
-    if (this.timer) {
-      // A waiting flush must not sit behind the (unref'd) interval timer,
-      // or the process can exit before the buffer is written.
-      clearTimeout(this.timer);
-      this.timer = null;
-      this.processing = false;
-    }
-    this.schedule();
+    // A waiting flush must not sit behind the (unref'd) interval timer,
+    // or the process can exit before the buffer is written.
+    this.drainNow();
     return this.drainPromise;
   }
 
@@ -114,7 +115,16 @@ export class AsyncQueue {
     return this.closingPromise;
   }
 
-  private schedule(): void {
+  private drainNow(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.processing = false;
+    }
+    this.schedule(true);
+  }
+
+  private schedule(immediate = false): void {
     if (this.processing) return;
     if (this.buffer.length === 0) return;
 
@@ -123,7 +133,7 @@ export class AsyncQueue {
       void this.drain();
     };
 
-    if (this.opts.flushIntervalMs > 0 && !this.drainResolve) {
+    if (this.opts.flushIntervalMs > 0 && !this.drainResolve && !immediate) {
       this.timer = setTimeout(() => {
         this.timer = null;
         run();
@@ -152,10 +162,17 @@ export class AsyncQueue {
 
   /** Moves waiting `push()` calls into the buffer, oldest first, while there is room. */
   private admitWaiting(): void {
-    while (this.waiting.length > 0 && this.buffer.length < this.maxSize) {
-      const next = this.waiting.shift()!;
+    while (this.waitingHead < this.waiting.length && this.buffer.length < this.maxSize) {
+      const next = this.waiting[this.waitingHead++]!;
       this.buffer.push(next.record);
       next.resolve();
+    }
+    if (this.waitingHead === this.waiting.length) {
+      this.waiting = [];
+      this.waitingHead = 0;
+    } else if (this.waitingHead > 1024 && this.waitingHead * 2 > this.waiting.length) {
+      this.waiting = this.waiting.slice(this.waitingHead);
+      this.waitingHead = 0;
     }
   }
 

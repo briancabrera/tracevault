@@ -332,4 +332,42 @@ describe("AsyncQueue — maxSize", () => {
     await Promise.all([...pushes, closing]);
     expect(processed).toEqual(["a", "b", "c"]);
   });
+
+  it("a full buffer drains right away instead of waiting for flushIntervalMs", async () => {
+    const processed: string[] = [];
+    const queue = new AsyncQueue({
+      batchSize: 10,
+      flushIntervalMs: 60_000,
+      maxSize: 2,
+      handler: async (record) => {
+        processed.push(record.id);
+      },
+      onError: () => {},
+    });
+    await queue.push(makeRecord("a"));
+    await queue.push(makeRecord("b"));
+    const started = Date.now();
+    await queue.push(makeRecord("c"));
+    expect(Date.now() - started).toBeLessThan(1_000);
+    await queue.close();
+    expect(processed).toEqual(["a", "b", "c"]);
+  });
+
+  it("admits many waiters in FIFO order", async () => {
+    const processed: string[] = [];
+    const queue = new AsyncQueue({
+      batchSize: 7,
+      flushIntervalMs: 0,
+      maxSize: 3,
+      handler: async () => {},
+      batchHandler: async (records) => {
+        for (const r of records) processed.push(r.id);
+      },
+      onError: () => {},
+    });
+    const ids = Array.from({ length: 5_000 }, (_, i) => String(i));
+    await Promise.all(ids.map((id) => queue.push(makeRecord(id))));
+    await queue.close();
+    expect(processed).toEqual(ids);
+  });
 });
