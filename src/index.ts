@@ -7,6 +7,7 @@ export {
 export {
   ConfigError,
   DriverError,
+  QueueFullError,
   SchemaUpgradeError,
   TracevaultError,
   ValidationError,
@@ -22,6 +23,7 @@ export {
 export { assertValidScopeName, assertValidTableName, assertPgPoolLike } from "./core/validator.js";
 
 export type {
+  AsyncQueueFullBehavior,
   AuditActor,
   AuditDiffEvent,
   AuditDriver,

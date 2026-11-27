@@ -250,6 +250,9 @@ node -e 'console.log(require("tracevault").generateInitSql("audit_user_events"))
 | `onError`                | `(err, record) => void`     | `console.error`| Async insert failures. |
 | `asyncBatchSize`         | `number`                    | `50`           | |
 | `asyncFlushIntervalMs`   | `number`                    | `0`            | |
+| `asyncMaxQueueSize`      | `number`                    | `10000`        | Max async events waiting to be written (`Infinity` = unbounded). |
+| `asyncQueueFullBehavior` | `"wait" \| "drop"`          | `"wait"`       | When the queue is full: `emit()` waits for room, or drops the event and calls `onError` with a `QueueFullError`. |
+| `onPoolError`            | `(err) => void`             | `console.error`| `error` events from the pg pool (e.g. idle connection killed). On an injected pool it is only attached if the pool has no `error` listener. |
 
 ### Shared `pg.Pool` (TLS, RDS, `@flash/pg-config`)
 
@@ -287,9 +290,15 @@ await audit.close();
 ```
 
 > Async mode uses a simple in-process FIFO queue. It is **not** a distributed
-> system. There is no retry, no persistence across process boundaries, and no
-> back-pressure. If the process crashes before `flush()` completes, **buffered
-> events are lost**. Use `sync` mode when you need durability guarantees.
+> system. There is no retry and no persistence across process boundaries. If
+> the process crashes before `flush()` completes, **buffered events are lost**.
+> Use `sync` mode when you need durability guarantees.
+
+The queue is bounded by `asyncMaxQueueSize` (default 10000). When it is full,
+an async `emit()` waits until there is room, so a slow or unreachable database
+slows callers down instead of growing memory without limit. Set
+`asyncQueueFullBehavior: "drop"` to never wait: overflowing events are dropped
+and reported to `onError` with a `QueueFullError`.
 
 ## Masking
 
@@ -338,6 +347,7 @@ import { TracevaultError, ConfigError, ValidationError, DriverError } from "trac
 | `ConfigError`      | `startTracevault` receives an invalid configuration.                            |
 | `ValidationError`  | `emit` / `emitDiff` receives an invalid event or a non-JSON-safe payload.        |
 | `DriverError`      | The database driver fails to insert, healthcheck, or close.                      |
+| `QueueFullError`   | Not thrown: passed to `onError` when `asyncQueueFullBehavior: "drop"` drops an event. |
 | `SchemaUpgradeError` | `startTracevault` bootstrap cannot upgrade a table because existing rows do not fit new generated columns. |
 | `TracevaultError`  | Base class. Also thrown directly for lifecycle violations (emit after `close()`). |
 

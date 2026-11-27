@@ -121,6 +121,8 @@ export interface TracevaultQueryConfig {
    */
   endPoolOnClose?: boolean;
   tableName?: string;
+  /** See `TracevaultConfig.onPoolError`. */
+  onPoolError?: (error: Error) => void;
 }
 
 /**

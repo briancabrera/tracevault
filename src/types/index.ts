@@ -12,6 +12,13 @@ export type AuditMode = "sync" | "async";
 
 export type AuditDriver = "postgres";
 
+/**
+ * What an async `emit()` does when `asyncMaxQueueSize` events are already
+ * waiting: `"wait"` until there is room (back-pressure), or `"drop"` the
+ * event and report it to `onError` with a `QueueFullError`.
+ */
+export type AsyncQueueFullBehavior = "wait" | "drop";
+
 export interface AuditActor {
   id: string;
   type: string;
@@ -118,6 +125,20 @@ export interface TracevaultConfig {
    * Defaults to 0 (process immediately on `setImmediate`).
    */
   asyncFlushIntervalMs?: number;
+  /**
+   * Max async events waiting to be written. When it is reached, async
+   * `emit()` follows `asyncQueueFullBehavior`. Defaults to 10000.
+   */
+  asyncMaxQueueSize?: number;
+  /** Defaults to `"wait"`. */
+  asyncQueueFullBehavior?: AsyncQueueFullBehavior;
+  /**
+   * Called on `error` events from the PostgreSQL pool (e.g. an idle client
+   * whose connection dropped). Defaults to logging via `console.error`.
+   * On an injected pool it is only attached when the pool has no `error`
+   * listener yet.
+   */
+  onPoolError?: (error: Error) => void;
 }
 
 /**
@@ -158,6 +179,8 @@ export interface TracevaultScopeOverrides {
   onError?: (error: Error, record: PersistedRecord) => void;
   asyncBatchSize?: number;
   asyncFlushIntervalMs?: number;
+  asyncMaxQueueSize?: number;
+  asyncQueueFullBehavior?: AsyncQueueFullBehavior;
 }
 
 /**
@@ -240,4 +263,18 @@ export interface StartTracevaultOptions {
   onError?: (error: Error, record: PersistedRecord) => void;
   asyncBatchSize?: number;
   asyncFlushIntervalMs?: number;
+  /**
+   * Max async events waiting to be written. When it is reached, async
+   * `emit()` follows `asyncQueueFullBehavior`. Defaults to 10000.
+   */
+  asyncMaxQueueSize?: number;
+  /** Defaults to `"wait"`. */
+  asyncQueueFullBehavior?: AsyncQueueFullBehavior;
+  /**
+   * Called on `error` events from the PostgreSQL pool (e.g. an idle client
+   * whose connection dropped). Defaults to logging via `console.error`.
+   * On an injected pool it is only attached when the pool has no `error`
+   * listener yet.
+   */
+  onPoolError?: (error: Error) => void;
 }
