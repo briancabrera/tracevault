@@ -130,16 +130,33 @@ function immutableTriggerStatements(t: string): { row: string; truncate: string 
   };
 }
 
-/** Idempotent DDL that makes `tableName` append-only (also in `sql/004`). */
+/**
+ * Idempotent DDL that makes `tableName` append-only (also in `sql/004`).
+ * Creates only what is missing: re-running never drops a guard (no window
+ * without the trigger) and never replaces a function another role owns.
+ */
 export function immutableDdlStatements(tableName: string): readonly string[] {
   assertValidTableName(tableName, "immutableDdlStatements");
   const { row, truncate } = immutableTriggerStatements(tableName);
+  const ifNoTrigger = (name: string, create: string) => `DO $tv$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgrelid = '"${tableName}"'::regclass AND tgname = '${name}'
+  ) THEN
+    ${create.replace(/\n/g, "\n    ")};
+  END IF;
+END
+$tv$`;
   return [
-    immutableFunctionStatement,
-    `DROP TRIGGER IF EXISTS ${IMMUTABLE_ROW_TRIGGER} ON "${tableName}"`,
-    row,
-    `DROP TRIGGER IF EXISTS ${IMMUTABLE_TRUNCATE_TRIGGER} ON "${tableName}"`,
-    truncate,
+    `DO $tv$
+BEGIN
+  IF to_regprocedure('${IMMUTABLE_FUNCTION}()') IS NULL THEN
+    EXECUTE $fn$${immutableFunctionStatement}$fn$;
+  END IF;
+END
+$tv$`,
+    ifNoTrigger(IMMUTABLE_ROW_TRIGGER, row),
+    ifNoTrigger(IMMUTABLE_TRUNCATE_TRIGGER, truncate),
   ];
 }
 
@@ -200,7 +217,13 @@ async function ensureImmutable(executor: SqlExecutor, t: string): Promise<void> 
     ...(existing.has(IMMUTABLE_TRUNCATE_TRIGGER) ? [] : [truncate]),
   ];
   if (missing.length === 0) return;
-  await executor.query(immutableFunctionStatement);
+  // Another role may own the shared function (e.g. two services, one schema).
+  const fn = await executor.query(`SELECT to_regprocedure($1) IS NOT NULL AS present`, [
+    `${IMMUTABLE_FUNCTION}()`,
+  ]);
+  if (!(fn.rows[0] as { present: boolean } | undefined)?.present) {
+    await executor.query(immutableFunctionStatement);
+  }
   for (const stmt of missing) await executor.query(stmt);
 }
 
