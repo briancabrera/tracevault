@@ -43,3 +43,11 @@ export class QueueFullError extends TracevaultError {
     this.name = "QueueFullError";
   }
 }
+
+/** Schema bootstrap cannot upgrade a table because of existing data. */
+export class SchemaUpgradeError extends TracevaultError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SchemaUpgradeError";
+  }
+}

@@ -8,6 +8,7 @@ export {
   ConfigError,
   DriverError,
   QueueFullError,
+  SchemaUpgradeError,
   TracevaultError,
   ValidationError,
 } from "./core/errors.js";
