@@ -108,6 +108,58 @@ export function auditTableDdlScript(tableName: string): string {
   return auditTableDdlStatements(tableName).join(";\n\n") + ";";
 }
 
+/** Shared trigger function that rejects any change to an audit table. */
+export const IMMUTABLE_FUNCTION = "tracevault_reject_mutation";
+const IMMUTABLE_ROW_TRIGGER = "tracevault_append_only";
+const IMMUTABLE_TRUNCATE_TRIGGER = "tracevault_no_truncate";
+
+const immutableFunctionStatement = `CREATE OR REPLACE FUNCTION ${IMMUTABLE_FUNCTION}() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Tracevault: audit table "%" is append-only (% rejected)', TG_TABLE_NAME, TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END
+$$`;
+
+function immutableTriggerStatements(t: string): { row: string; truncate: string } {
+  return {
+    row: `CREATE TRIGGER ${IMMUTABLE_ROW_TRIGGER} BEFORE UPDATE OR DELETE ON "${t}"
+  FOR EACH ROW EXECUTE FUNCTION ${IMMUTABLE_FUNCTION}()`,
+    truncate: `CREATE TRIGGER ${IMMUTABLE_TRUNCATE_TRIGGER} BEFORE TRUNCATE ON "${t}"
+  FOR EACH STATEMENT EXECUTE FUNCTION ${IMMUTABLE_FUNCTION}()`,
+  };
+}
+
+/**
+ * Idempotent DDL that makes `tableName` append-only (also in `sql/004`).
+ * Creates only what is missing: re-running never drops a guard (no window
+ * without the trigger) and never replaces a function another role owns.
+ */
+export function immutableDdlStatements(tableName: string): readonly string[] {
+  assertValidTableName(tableName, "immutableDdlStatements");
+  const { row, truncate } = immutableTriggerStatements(tableName);
+  const ifNoTrigger = (name: string, create: string) => `DO $tv$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgrelid = '"${tableName}"'::regclass AND tgname = '${name}'
+  ) THEN
+    ${create.replace(/\n/g, "\n    ")};
+  END IF;
+END
+$tv$`;
+  return [
+    `DO $tv$
+BEGIN
+  IF to_regprocedure('${IMMUTABLE_FUNCTION}()') IS NULL THEN
+    EXECUTE $fn$${immutableFunctionStatement}$fn$;
+  END IF;
+END
+$tv$`,
+    ifNoTrigger(IMMUTABLE_ROW_TRIGGER, row),
+    ifNoTrigger(IMMUTABLE_TRUNCATE_TRIGGER, truncate),
+  ];
+}
+
 export interface SqlExecutor {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
 }
@@ -123,6 +175,7 @@ export interface SqlExecutor {
 export async function ensureAuditTableSchema(
   executor: SqlExecutor,
   tableName: string,
+  opts: { immutable?: boolean } = {},
 ): Promise<void> {
   assertValidTableName(tableName, "ensureAuditTableSchema");
   const t = tableName;
@@ -148,6 +201,31 @@ export async function ensureAuditTableSchema(
   for (const stmt of indexStatements(t)) {
     await executor.query(stmt);
   }
+
+  if (opts.immutable) await ensureImmutable(executor, t);
+}
+
+/** Creates only the missing triggers, so a no-op startup takes no table lock. */
+async function ensureImmutable(executor: SqlExecutor, t: string): Promise<void> {
+  const { rows } = await executor.query(
+    `SELECT tgname FROM pg_trigger WHERE tgrelid = to_regclass($1) AND NOT tgisinternal`,
+    [`"${t}"`],
+  );
+  const existing = new Set((rows as Array<{ tgname: string }>).map((r) => r.tgname));
+  const { row, truncate } = immutableTriggerStatements(t);
+  const missing = [
+    ...(existing.has(IMMUTABLE_ROW_TRIGGER) ? [] : [row]),
+    ...(existing.has(IMMUTABLE_TRUNCATE_TRIGGER) ? [] : [truncate]),
+  ];
+  if (missing.length === 0) return;
+  // Another role may own the shared function (e.g. two services, one schema).
+  const fn = await executor.query(`SELECT to_regprocedure($1) IS NOT NULL AS present`, [
+    `${IMMUTABLE_FUNCTION}()`,
+  ]);
+  if (!(fn.rows[0] as { present: boolean } | undefined)?.present) {
+    await executor.query(immutableFunctionStatement);
+  }
+  for (const stmt of missing) await executor.query(stmt);
 }
 
 /**
@@ -199,12 +277,13 @@ async function assertNoOversizedValues(
 export async function bootstrapAuditSchema(
   executor: SqlExecutor,
   tableNames: readonly string[],
+  opts: { immutable?: boolean } = {},
 ): Promise<void> {
   for (const tableName of new Set(tableNames)) {
     await executor.query("BEGIN");
     try {
       await executor.query("SELECT pg_advisory_xact_lock($1::bigint)", [SCHEMA_BOOTSTRAP_LOCK_KEY]);
-      await ensureAuditTableSchema(executor, tableName);
+      await ensureAuditTableSchema(executor, tableName, opts);
       await executor.query("COMMIT");
     } catch (err) {
       await executor.query("ROLLBACK").catch(() => {});

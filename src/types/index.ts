@@ -239,6 +239,12 @@ export interface StartTracevaultBootstrap {
    * using the write connection. Default: ensure schema at startup.
    */
   ensureSchema?: boolean;
+  /**
+   * Install append-only triggers on every scope table: `UPDATE`, `DELETE`
+   * and `TRUNCATE` fail. Opt-in; requires `ensureSchema`. Turning it back
+   * off does not remove the triggers (see README).
+   */
+  immutable?: boolean;
 }
 
 /** Options passed to {@link startTracevault}. */

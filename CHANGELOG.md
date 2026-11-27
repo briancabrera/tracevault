@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`onPoolError`** — `error` events from the PostgreSQL pool (e.g. an idle connection killed by the server) are now reported, by default with `console.error`. Before, they were silently discarded, including on injected pools that had their own listener.
 - **Cursor pagination** — `query.findPage(filters)` returns `{ items, nextCursor }` using keyset pagination on `(occurred_at, id)`. Pages stay consistent while new rows are written (offset pages shift) and deep pages are as fast as the first.
 - **Transactional emits** — `emit(event, { client })` and `emitDiff(event, { client })` write through the given `pg` client, so the audit row commits or rolls back with your own transaction. These writes are always synchronous.
+- **Append-only audit tables (opt-in)** — `bootstrap: { immutable: true }`, `generateInitSql(table, { immutable: true })` or the new `sql/004_audit_logs_immutable.sql` install triggers that reject `UPDATE`, `DELETE` and `TRUNCATE` (SQLSTATE `42501`).
 
 ### Fixed
 

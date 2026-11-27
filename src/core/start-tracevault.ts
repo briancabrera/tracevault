@@ -55,13 +55,14 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
   validateStartTracevaultOptions(options);
 
   const ensureSchema = options.bootstrap?.ensureSchema !== false;
+  const immutable = options.bootstrap?.immutable === true;
 
   if (ensureSchema) {
     const tables = Object.values(options.scopes).map((s) => s.tableName);
     if (options.pool) {
       const client = await options.pool.connect();
       try {
-        await bootstrapAuditSchema(client, tables);
+        await bootstrapAuditSchema(client, tables, { immutable });
       } catch (err) {
         // Destroy rather than reuse: the session may still be mid-transaction.
         client.release(err instanceof Error ? err : true);
@@ -72,7 +73,7 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
       const client = new Client({ connectionString: options.connectionString });
       await client.connect();
       try {
-        await bootstrapAuditSchema(client, tables);
+        await bootstrapAuditSchema(client, tables, { immutable });
       } finally {
         await client.end();
       }
