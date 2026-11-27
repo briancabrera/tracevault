@@ -17,9 +17,9 @@ import { assertValidTableName } from "./validator.js";
  *   base config: `/^[A-Za-z_][A-Za-z0-9_]*$/`, length 1..63.
  * - Throws `ConfigError` on invalid names.
  *
- * Note: PostgreSQL silently truncates identifiers longer than 63 chars.
- * When `tableName` is very long, the generated index names may be
- * truncated; keep table names short (<= 50 chars is safe) if this matters.
+ * Index names keep the `idx_<table>_<suffix>` form when it fits in
+ * PostgreSQL's 63-char limit; longer table names get a shortened, hashed
+ * prefix so every index is still created.
  */
 export function generateInitSql(tableName: string): string {
   assertValidTableName(tableName, "generateInitSql");

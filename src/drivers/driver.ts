@@ -8,6 +8,7 @@ import type { PersistedRecord } from "../types/index.js";
  */
 export interface AuditDriverClient {
   insert(record: PersistedRecord): Promise<void>;
+  insertMany(records: readonly PersistedRecord[]): Promise<void>;
   healthcheck(): Promise<boolean>;
   close(): Promise<void>;
 }

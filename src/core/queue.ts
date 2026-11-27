@@ -4,6 +4,12 @@ export interface AsyncQueueOptions {
   batchSize: number;
   flushIntervalMs: number;
   handler: (record: PersistedRecord) => Promise<void>;
+  /**
+   * Optional bulk handler. When set, each batch is persisted with one call;
+   * if it throws, the batch is retried record by record through `handler`
+   * so `onError` only sees the records that actually failed.
+   */
+  batchHandler?: (records: readonly PersistedRecord[]) => Promise<void>;
   onError: (error: Error, record: PersistedRecord) => void;
 }
 
@@ -91,23 +97,32 @@ export class AsyncQueue {
     }
   }
 
+  private async processOne(record: PersistedRecord): Promise<void> {
+    try {
+      await this.opts.handler(record);
+    } catch (err) {
+      try {
+        this.opts.onError(err instanceof Error ? err : new Error(String(err)), record);
+      } catch {
+        // onError must never break the drain loop.
+      }
+    }
+  }
+
   private async drain(): Promise<void> {
     try {
       while (this.buffer.length > 0) {
         const batch = this.buffer.splice(0, this.opts.batchSize);
-        for (const record of batch) {
+        if (this.opts.batchHandler && batch.length > 1) {
           try {
-            await this.opts.handler(record);
-          } catch (err) {
-            try {
-              this.opts.onError(
-                err instanceof Error ? err : new Error(String(err)),
-                record,
-              );
-            } catch {
-              // onError must never break the drain loop.
-            }
+            await this.opts.batchHandler(batch);
+            continue;
+          } catch {
+            // Fall through to per-record inserts to isolate the failures.
           }
+        }
+        for (const record of batch) {
+          await this.processOne(record);
         }
       }
     } finally {

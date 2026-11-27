@@ -157,6 +157,7 @@ function buildInstance(
     batchSize: effective.asyncBatchSize,
     flushIntervalMs: effective.asyncFlushIntervalMs,
     handler: (record) => driver.insert(record),
+    batchHandler: (records) => driver.insertMany(records),
     onError: effective.onError,
   });
 

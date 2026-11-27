@@ -1,3 +1,4 @@
+name: tracevault-test
 services:
   postgres:
     image: postgres:16-alpine

@@ -190,3 +190,53 @@ describe("AsyncQueue", () => {
     expect(processed).toEqual(["a"]);
   });
 });
+
+describe("AsyncQueue — batchHandler", () => {
+  it("persists each batch with a single batchHandler call", async () => {
+    const batches: string[][] = [];
+    const single = vi.fn(async () => {});
+    const queue = new AsyncQueue({
+      batchSize: 2,
+      flushIntervalMs: 0,
+      handler: single,
+      batchHandler: async (records) => {
+        batches.push(records.map((r) => r.id));
+      },
+      onError: () => {},
+    });
+
+    for (const id of ["a", "b", "c", "d", "e"]) queue.enqueue(makeRecord(id));
+    await queue.flush();
+
+    expect(batches).toEqual([
+      ["a", "b"],
+      ["c", "d"],
+    ]);
+    expect(single).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to per-record handler when the batch fails, reporting only bad records", async () => {
+    const processed: string[] = [];
+    const errors: string[] = [];
+    const queue = new AsyncQueue({
+      batchSize: 10,
+      flushIntervalMs: 0,
+      handler: async (record) => {
+        if (record.id === "bad") throw new Error("boom");
+        processed.push(record.id);
+      },
+      batchHandler: async () => {
+        throw new Error("batch failed");
+      },
+      onError: (_err, record) => {
+        errors.push(record.id);
+      },
+    });
+
+    for (const id of ["a", "bad", "c"]) queue.enqueue(makeRecord(id));
+    await queue.flush();
+
+    expect(processed).toEqual(["a", "c"]);
+    expect(errors).toEqual(["bad"]);
+  });
+});

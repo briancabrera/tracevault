@@ -356,9 +356,12 @@ describe("tracevault scope() — lifecycle", () => {
     await root.close();
 
     const inserts = queryCalls.filter((c) => c.sql.includes("INSERT INTO"));
-    expect(inserts).toHaveLength(4);
+    // Multi-row inserts carry one array per column; single inserts one value.
+    const rowsIn = (c: QueryCall) => (Array.isArray(c.params[0]) ? c.params[0].length : 1);
     const byTable = (t: string) =>
-      inserts.filter((c) => c.sql.includes(`INSERT INTO "${t}"`)).length;
+      inserts
+        .filter((c) => c.sql.includes(`INSERT INTO "${t}"`))
+        .reduce((n, c) => n + rowsIn(c), 0);
     expect(byTable("a")).toBe(2);
     expect(byTable("b")).toBe(1);
     expect(byTable("audit_logs")).toBe(1);
