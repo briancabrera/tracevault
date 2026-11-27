@@ -42,7 +42,8 @@ export function buildFindManySql(
  * Keyset version of `buildFindManySql`: rows strictly after `cursor` in
  * `(occurred_at, id)` order. Fetches `limit + 1` rows so the caller can tell
  * whether another page exists, and returns `occurred_at` as UTC text with
- * microseconds (`cursor_ts`) because a JS `Date` would round it to ms.
+ * microseconds and era (`cursor_ts`; `infinity` stays as-is) because a JS
+ * `Date` would round it to ms.
  */
 export function buildFindPageSql(tableName: string, filters: NormalizedPageFilters): BuiltQuery {
   const { whereClause, params } = buildWhere(filters);
@@ -59,7 +60,8 @@ export function buildFindPageSql(tableName: string, filters: NormalizedPageFilte
 
   const sql =
     `SELECT ${SELECT_COLUMNS}, ` +
-    `to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS cursor_ts ` +
+    `COALESCE(to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US BC'), ` +
+    `occurred_at::text) AS cursor_ts ` +
     `FROM "${tableName}" ` +
     `${where} ` +
     `ORDER BY occurred_at ${dir}, id ${dir} ` +

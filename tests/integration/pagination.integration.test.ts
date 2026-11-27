@@ -86,6 +86,28 @@ describe("integration / findPage", () => {
     expect(first.nextCursor).toBeNull();
   });
 
+  it("pages across BC, year > 9999 and infinite timestamps", async () => {
+    await dbClient.query(
+      `INSERT INTO "${TABLE}" (id, event, mode, occurred_at)
+       SELECT gen_random_uuid(), 'page.e', 'sync', ts
+       FROM unnest($1::timestamptz[]) AS ts, generate_series(1, 2)`,
+      [
+        [
+          "-infinity",
+          "0044-03-15 12:00:00.000001+00 BC",
+          "0044-03-15 12:00:00.000001+00",
+          "12026-01-01 00:00:00+00",
+          "infinity",
+        ],
+      ],
+    );
+    for (const order of ["asc", "desc"] as const) {
+      const { ids } = await readAll(order, 1);
+      expect(ids).toHaveLength(10);
+      expect(new Set(ids).size).toBe(10);
+    }
+  });
+
   it("combines the cursor with filters", async () => {
     await seed(30, "page.e");
     await seed(30, "page.other");

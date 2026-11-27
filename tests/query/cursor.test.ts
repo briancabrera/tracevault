@@ -6,12 +6,23 @@ import { decodeCursor, encodeCursor } from "../../src/query/cursor.js";
 import { validateAndNormalizePageFilters } from "../../src/query/validator.js";
 
 const ID = "8f14e45f-ceea-467f-a9c5-6b7c1e1d2a3b";
-const TS = "2026-01-02T03:04:05.123456";
+const TS = "2026-01-02T03:04:05.123456 AD";
 
 describe("page cursor", () => {
   it("round-trips", () => {
     const c = { ts: TS, id: ID, order: "desc" as const };
     expect(decodeCursor(encodeCursor(c))).toEqual(c);
+  });
+
+  it("accepts BC, 5-digit-year and infinite timestamps", () => {
+    for (const ts of [
+      "0044-03-15T12:00:00.000001 BC",
+      "12026-01-01T00:00:00.500000 AD",
+      "infinity",
+      "-infinity",
+    ]) {
+      expect(decodeCursor(encodeCursor({ ts, id: ID, order: "asc" })).ts).toBe(ts);
+    }
   });
 
   it("rejects malformed cursors", () => {
