@@ -4,6 +4,8 @@ import { DriverError, TracevaultError } from "../core/errors.js";
 import { PostgresReader } from "./reader.js";
 import type {
   AuditCountFilters,
+  AuditPage,
+  AuditPageFilters,
   AuditQueryFilters,
   AuditRecord,
   TracevaultQuery,
@@ -14,6 +16,7 @@ import {
   assertUuid,
   validateAndNormalizeCountFilters,
   validateAndNormalizeFilters,
+  validateAndNormalizePageFilters,
   validateQueryConfig,
   validateQueryScopeOverrides,
 } from "./validator.js";
@@ -150,6 +153,15 @@ function buildInstance(
       assertOpen();
       const normalized = validateAndNormalizeFilters(filters);
       return reader.findMany<TData, TMeta>(normalized);
+    },
+
+    async findPage<
+      TData extends Record<string, unknown> = Record<string, unknown>,
+      TMeta extends Record<string, unknown> = Record<string, unknown>,
+    >(filters?: AuditPageFilters): Promise<AuditPage<TData, TMeta>> {
+      assertOpen();
+      const normalized = validateAndNormalizePageFilters(filters);
+      return reader.findPage<TData, TMeta>(normalized);
     },
 
     async findById<

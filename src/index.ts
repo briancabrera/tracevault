@@ -41,6 +41,8 @@ export type {
 
 export type {
   AuditCountFilters,
+  AuditPage,
+  AuditPageFilters,
   AuditQueryFilters,
   AuditRecord,
   TracevaultQuery,

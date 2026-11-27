@@ -12,7 +12,10 @@ import {
 } from "./validator.js";
 
 /** Read-only surface exposed on `TracevaultApp` and each scope handle. */
-export type TracevaultAppQuery = Pick<TracevaultQuery, "findMany" | "findById" | "count">;
+export type TracevaultAppQuery = Pick<
+  TracevaultQuery,
+  "findMany" | "findPage" | "findById" | "count"
+>;
 
 export interface TracevaultScopeHandle {
   emit(event: AuditEvent): Promise<void>;
@@ -34,6 +37,7 @@ export interface TracevaultApp {
 function queryFacade(query: TracevaultQuery): TracevaultAppQuery {
   return {
     findMany: query.findMany.bind(query),
+    findPage: query.findPage.bind(query),
     findById: query.findById.bind(query),
     count: query.count.bind(query),
   };

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cursor pagination** — `query.findPage(filters)` returns `{ items, nextCursor }` using keyset pagination on `(occurred_at, id)`. Pages stay consistent while new rows are written (offset pages shift) and deep pages are as fast as the first.
+
 ### Fixed
 
 - **Upgrading older schemas** — `bootstrap.ensureSchema` now adds the generated `outcome`, `error_code` and `severity` columns to tables created by `sql/001` only. Before, `startTracevault` failed with `column "error_code" does not exist`.

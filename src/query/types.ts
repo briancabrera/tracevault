@@ -103,6 +103,28 @@ export interface AuditQueryFilters {
   order?: "asc" | "desc";
 }
 
+/**
+ * Filters accepted by `findPage`: the `findMany` filters, with an opaque
+ * `cursor` instead of `offset`.
+ */
+export type AuditPageFilters = Omit<AuditQueryFilters, "offset"> & {
+  /**
+   * `nextCursor` from the previous page. Pass the same filters and `order`
+   * as the request that produced it. Omit (or `null`) for the first page.
+   */
+  cursor?: string | null;
+};
+
+/** One page returned by `findPage`. */
+export interface AuditPage<
+  TData extends Record<string, unknown> = Record<string, unknown>,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+> {
+  items: Array<AuditRecord<TData, TMeta>>;
+  /** Cursor for the next page, or `null` when this is the last page. */
+  nextCursor: string | null;
+}
+
 /** Filters accepted by `count`. Pagination/order fields are not meaningful here. */
 export type AuditCountFilters = Omit<AuditQueryFilters, "limit" | "offset" | "order">;
 
@@ -150,6 +172,18 @@ export interface TracevaultQuery {
   >(
     filters?: AuditQueryFilters,
   ): Promise<Array<AuditRecord<TData, TMeta>>>;
+
+  /**
+   * Keyset (cursor) pagination over the same filters and ordering as
+   * `findMany`. Unlike `offset`, pages stay stable while new rows are
+   * written and deep pages cost the same as the first one.
+   */
+  findPage<
+    TData extends Record<string, unknown> = Record<string, unknown>,
+    TMeta extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    filters?: AuditPageFilters,
+  ): Promise<AuditPage<TData, TMeta>>;
 
   /**
    * Look up a single record by its `id` (UUID). Returns `null` when not
