@@ -174,11 +174,14 @@ async function assertNoOversizedValues(
   const detail = problems
     .map((c) => {
       const where = `length(BTRIM(data #>> '${c.path}')) > ${c.maxLength}`;
+      // Sibling key, so nothing in the audit payload is lost (works for objects too).
+      const keepPath = c.path.replace(/\}$/, "_original}");
+      const keep = keepPath.slice(1, -1).replace(",", ".");
       return (
         `  - ${Number(found[c.name])} row(s) with data#>>'${c.path}' longer than ${c.maxLength} chars ` +
-        `(column "${c.name}"). Fix, e.g.:\n` +
-        `      UPDATE "${t}" SET data = jsonb_set(data, '${c.path}', ` +
-        `to_jsonb(left(BTRIM(data #>> '${c.path}'), ${c.maxLength}))) WHERE ${where};`
+        `(column "${c.name}"). Fix, e.g. (keeps the original under "${keep}"):\n` +
+        `      UPDATE "${t}" SET data = jsonb_set(jsonb_set(data, '${keepPath}', data #> '${c.path}'), ` +
+        `'${c.path}', to_jsonb(left(BTRIM(data #>> '${c.path}'), ${c.maxLength}))) WHERE ${where};`
       );
     })
     .join("\n");
