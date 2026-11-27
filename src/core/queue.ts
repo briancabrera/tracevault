@@ -1,8 +1,13 @@
-import type { PersistedRecord } from "../types/index.js";
+import type { AsyncQueueFullBehavior, PersistedRecord } from "../types/index.js";
+import { QueueFullError } from "./errors.js";
 
 export interface AsyncQueueOptions {
   batchSize: number;
   flushIntervalMs: number;
+  /** Max records waiting in the buffer. `Infinity` disables the bound. */
+  maxSize?: number;
+  /** What `push()` does when the buffer is full. Defaults to `"wait"`. */
+  whenFull?: AsyncQueueFullBehavior;
   handler: (record: PersistedRecord) => Promise<void>;
   /**
    * Optional bulk handler. When set, each batch is persisted with one call;
@@ -17,8 +22,10 @@ export interface AsyncQueueOptions {
  * Minimal in-memory FIFO queue for async event persistence.
  *
  * Contract:
- * - `enqueue(record)` appends and schedules a drain. Throws if the queue
- *   is already closed.
+ * - `push(record)` appends and schedules a drain. Throws if the queue
+ *   is already closed. When `maxSize` records are already waiting it either
+ *   resolves once there is room (`"wait"`, FIFO) or reports the record to
+ *   `onError` with a `QueueFullError` and drops it (`"drop"`).
  * - `flush()` resolves once all currently-enqueued records have been
  *   processed. Safe to call at any time.
  * - `close()` marks the queue closed (enqueue becomes an error), drains
@@ -32,6 +39,8 @@ export interface AsyncQueueOptions {
  */
 export class AsyncQueue {
   private readonly buffer: PersistedRecord[] = [];
+  private readonly waiting: Array<{ record: PersistedRecord; resolve: () => void }> = [];
+  private readonly maxSize: number;
   private readonly opts: AsyncQueueOptions;
   private processing = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -42,6 +51,7 @@ export class AsyncQueue {
 
   constructor(opts: AsyncQueueOptions) {
     this.opts = opts;
+    this.maxSize = opts.maxSize ?? Infinity;
   }
 
   get size(): number {
@@ -52,12 +62,27 @@ export class AsyncQueue {
     return this.closed;
   }
 
-  enqueue(record: PersistedRecord): void {
+  push(record: PersistedRecord): Promise<void> {
     if (this.closed) {
       throw new Error("Tracevault: cannot enqueue events, queue is closed.");
     }
-    this.buffer.push(record);
-    this.schedule();
+    if (this.buffer.length < this.maxSize && this.waiting.length === 0) {
+      this.buffer.push(record);
+      this.schedule();
+      return Promise.resolve();
+    }
+    if (this.opts.whenFull === "drop") {
+      this.report(
+        new QueueFullError(
+          `Tracevault: async queue is full (${this.maxSize} events waiting); event dropped.`,
+        ),
+        record,
+      );
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.waiting.push({ record, resolve });
+    });
   }
 
   /**
@@ -113,11 +138,24 @@ export class AsyncQueue {
     try {
       await this.opts.handler(record);
     } catch (err) {
-      try {
-        this.opts.onError(err instanceof Error ? err : new Error(String(err)), record);
-      } catch {
-        // onError must never break the drain loop.
-      }
+      this.report(err instanceof Error ? err : new Error(String(err)), record);
+    }
+  }
+
+  private report(error: Error, record: PersistedRecord): void {
+    try {
+      this.opts.onError(error, record);
+    } catch {
+      // onError must never break the drain loop.
+    }
+  }
+
+  /** Moves waiting `push()` calls into the buffer, oldest first, while there is room. */
+  private admitWaiting(): void {
+    while (this.waiting.length > 0 && this.buffer.length < this.maxSize) {
+      const next = this.waiting.shift()!;
+      this.buffer.push(next.record);
+      next.resolve();
     }
   }
 
@@ -125,6 +163,7 @@ export class AsyncQueue {
     try {
       while (this.buffer.length > 0) {
         const batch = this.buffer.splice(0, this.opts.batchSize);
+        this.admitWaiting();
         if (this.opts.batchHandler && batch.length > 1) {
           try {
             await this.opts.batchHandler(batch);
