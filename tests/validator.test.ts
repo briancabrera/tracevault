@@ -113,6 +113,19 @@ describe("validateConfig", () => {
     expect(() => validateConfig({ ...baseConfig(), asyncBatchSize: -1 })).toThrow(ConfigError);
   });
 
+  it("validates asyncMaxQueueSize, asyncQueueFullBehavior and onPoolError", () => {
+    for (const asyncMaxQueueSize of [0, -1, 1.5, NaN]) {
+      expect(() => validateConfig({ ...baseConfig(), asyncMaxQueueSize })).toThrow(ConfigError);
+    }
+    expect(() => validateConfig({ ...baseConfig(), asyncMaxQueueSize: Infinity })).not.toThrow();
+    expect(() =>
+      validateConfig({ ...baseConfig(), asyncQueueFullBehavior: "block" as never }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      validateConfig({ ...baseConfig(), onPoolError: "log" as never }),
+    ).toThrow(ConfigError);
+  });
+
   it("rejects negative asyncFlushIntervalMs", () => {
     expect(() => validateConfig({ ...baseConfig(), asyncFlushIntervalMs: -1 })).toThrow(
       ConfigError,

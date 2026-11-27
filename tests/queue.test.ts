@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { QueueFullError } from "../src/core/errors.js";
 import { AsyncQueue } from "../src/core/queue.js";
 import type { PersistedRecord } from "../src/types/index.js";
 
@@ -33,9 +34,9 @@ describe("AsyncQueue", () => {
       onError: () => {},
     });
 
-    queue.enqueue(makeRecord("a"));
-    queue.enqueue(makeRecord("b"));
-    queue.enqueue(makeRecord("c"));
+    queue.push(makeRecord("a"));
+    queue.push(makeRecord("b"));
+    queue.push(makeRecord("c"));
 
     await queue.flush();
 
@@ -57,9 +58,9 @@ describe("AsyncQueue", () => {
       },
     });
 
-    queue.enqueue(makeRecord("a"));
-    queue.enqueue(makeRecord("bad"));
-    queue.enqueue(makeRecord("c"));
+    queue.push(makeRecord("a"));
+    queue.push(makeRecord("bad"));
+    queue.push(makeRecord("c"));
 
     await queue.flush();
 
@@ -81,9 +82,9 @@ describe("AsyncQueue", () => {
       },
     });
 
-    queue.enqueue(makeRecord("a"));
-    queue.enqueue(makeRecord("bad"));
-    queue.enqueue(makeRecord("c"));
+    queue.push(makeRecord("a"));
+    queue.push(makeRecord("bad"));
+    queue.push(makeRecord("c"));
 
     await queue.flush();
 
@@ -99,12 +100,12 @@ describe("AsyncQueue", () => {
       onError: () => {},
     });
 
-    queue.enqueue(makeRecord("a"));
+    queue.push(makeRecord("a"));
     await queue.close();
     expect(handler).toHaveBeenCalledTimes(1);
     expect(queue.isClosed).toBe(true);
 
-    expect(() => queue.enqueue(makeRecord("b"))).toThrow(/closed/);
+    expect(() => queue.push(makeRecord("b"))).toThrow(/closed/);
   });
 
   it("close() is idempotent", async () => {
@@ -116,7 +117,7 @@ describe("AsyncQueue", () => {
       onError: () => {},
     });
 
-    queue.enqueue(makeRecord("a"));
+    queue.push(makeRecord("a"));
 
     const [r1, r2, r3] = await Promise.all([queue.close(), queue.close(), queue.close()]);
     expect(r1).toBeUndefined();
@@ -146,8 +147,8 @@ describe("AsyncQueue", () => {
       onError: () => {},
     });
 
-    queue.enqueue(makeRecord("a"));
-    queue.enqueue(makeRecord("b"));
+    queue.push(makeRecord("a"));
+    queue.push(makeRecord("b"));
 
     await Promise.all([queue.flush(), queue.flush(), queue.flush()]);
     expect(processed).toEqual(["a", "b"]);
@@ -163,13 +164,13 @@ describe("AsyncQueue", () => {
         processed.push(record.id);
         if (step === 0) {
           step = 1;
-          queue.enqueue(makeRecord("b"));
+          queue.push(makeRecord("b"));
         }
       },
       onError: () => {},
     });
 
-    queue.enqueue(makeRecord("a"));
+    queue.push(makeRecord("a"));
     await queue.flush();
 
     expect(processed).toEqual(["a", "b"]);
@@ -185,7 +186,7 @@ describe("AsyncQueue", () => {
       },
       onError: () => {},
     });
-    queue.enqueue(makeRecord("a"));
+    queue.push(makeRecord("a"));
     await queue.flush();
     expect(processed).toEqual(["a"]);
   });
@@ -200,7 +201,7 @@ describe("AsyncQueue", () => {
       },
       onError: () => {},
     });
-    queue.enqueue(makeRecord("a"));
+    queue.push(makeRecord("a"));
     const started = Date.now();
     await queue.close();
     expect(processed).toEqual(["a"]);
@@ -214,11 +215,11 @@ describe("AsyncQueue", () => {
       flushIntervalMs: 60_000,
       handler: async (record) => {
         processed.push(record.id);
-        if (record.id === "a") queue.enqueue(makeRecord("b"));
+        if (record.id === "a") queue.push(makeRecord("b"));
       },
       onError: () => {},
     });
-    queue.enqueue(makeRecord("a"));
+    queue.push(makeRecord("a"));
     const started = Date.now();
     await queue.flush();
     expect(processed).toEqual(["a", "b"]);
@@ -240,7 +241,7 @@ describe("AsyncQueue — batchHandler", () => {
       onError: () => {},
     });
 
-    for (const id of ["a", "b", "c", "d", "e"]) queue.enqueue(makeRecord(id));
+    for (const id of ["a", "b", "c", "d", "e"]) queue.push(makeRecord(id));
     await queue.flush();
 
     expect(batches).toEqual([
@@ -268,10 +269,105 @@ describe("AsyncQueue — batchHandler", () => {
       },
     });
 
-    for (const id of ["a", "bad", "c"]) queue.enqueue(makeRecord(id));
+    for (const id of ["a", "bad", "c"]) queue.push(makeRecord(id));
     await queue.flush();
 
     expect(processed).toEqual(["a", "c"]);
     expect(errors).toEqual(["bad"]);
+  });
+});
+
+describe("AsyncQueue — maxSize", () => {
+  function gatedQueue(opts: { maxSize: number; whenFull?: "wait" | "drop" }) {
+    const processed: string[] = [];
+    const errors: Array<{ err: Error; id: string }> = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const queue = new AsyncQueue({
+      batchSize: 1,
+      flushIntervalMs: 0,
+      maxSize: opts.maxSize,
+      whenFull: opts.whenFull,
+      handler: async (record) => {
+        await gate;
+        processed.push(record.id);
+      },
+      onError: (err, record) => errors.push({ err, id: record.id }),
+    });
+    return { queue, processed, errors, release };
+  }
+
+  it("\"wait\": push() resolves only once there is room, and keeps FIFO order", async () => {
+    const { queue, processed, release } = gatedQueue({ maxSize: 2 });
+    const resolved: string[] = [];
+    for (const id of ["a", "b", "c", "d", "e"]) {
+      void queue.push(makeRecord(id)).then(() => resolved.push(id));
+    }
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    // "a" is in flight, "b" and "c" fill the buffer; "d" and "e" wait.
+    expect(queue.size).toBe(2);
+    expect(resolved).toEqual(["a", "b", "c"]);
+    release();
+    await queue.flush();
+    expect(resolved).toEqual(["a", "b", "c", "d", "e"]);
+    expect(processed).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("\"drop\": reports overflow to onError with QueueFullError and keeps going", async () => {
+    const { queue, processed, errors, release } = gatedQueue({ maxSize: 2, whenFull: "drop" });
+    for (const id of ["a", "b", "c", "d"]) await queue.push(makeRecord(id));
+    expect(errors.map((e) => e.id)).toEqual(["c", "d"]);
+    expect(errors[0]!.err).toBeInstanceOf(QueueFullError);
+    release();
+    await queue.flush();
+    expect(processed).toEqual(["a", "b"]);
+  });
+
+  it("close() drains records still waiting for room", async () => {
+    const { queue, processed, release } = gatedQueue({ maxSize: 1 });
+    const pushes = ["a", "b", "c"].map((id) => queue.push(makeRecord(id)));
+    const closing = queue.close();
+    release();
+    await Promise.all([...pushes, closing]);
+    expect(processed).toEqual(["a", "b", "c"]);
+  });
+
+  it("a full buffer drains right away instead of waiting for flushIntervalMs", async () => {
+    const processed: string[] = [];
+    const queue = new AsyncQueue({
+      batchSize: 10,
+      flushIntervalMs: 60_000,
+      maxSize: 2,
+      handler: async (record) => {
+        processed.push(record.id);
+      },
+      onError: () => {},
+    });
+    await queue.push(makeRecord("a"));
+    await queue.push(makeRecord("b"));
+    const started = Date.now();
+    await queue.push(makeRecord("c"));
+    expect(Date.now() - started).toBeLessThan(1_000);
+    await queue.close();
+    expect(processed).toEqual(["a", "b", "c"]);
+  });
+
+  it("admits many waiters in FIFO order", async () => {
+    const processed: string[] = [];
+    const queue = new AsyncQueue({
+      batchSize: 7,
+      flushIntervalMs: 0,
+      maxSize: 3,
+      handler: async () => {},
+      batchHandler: async (records) => {
+        for (const r of records) processed.push(r.id);
+      },
+      onError: () => {},
+    });
+    const ids = Array.from({ length: 5_000 }, (_, i) => String(i));
+    await Promise.all(ids.map((id) => queue.push(makeRecord(id))));
+    await queue.close();
+    expect(processed).toEqual(ids);
   });
 });
