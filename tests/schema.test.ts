@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { generateInitSql } from "../src/core/schema.js";
+import { auditIndexName } from "../src/core/audit-ddl.js";
 import { ConfigError } from "../src/core/errors.js";
 
 describe("generateInitSql", () => {
@@ -74,5 +75,29 @@ describe("generateInitSql", () => {
     const sql = generateInitSql("any_table");
     expect(typeof sql).toBe("string");
     expect(sql.length).toBeGreaterThan(0);
+  });
+});
+
+describe("auditIndexName", () => {
+  it("keeps the historical name when it fits in 63 chars", () => {
+    expect(auditIndexName("audit_logs", "event")).toBe("idx_audit_logs_event");
+  });
+
+  it("produces distinct names <= 63 chars for long table names", () => {
+    const t = "a".repeat(59);
+    const suffixes = [
+      "event",
+      "actor",
+      "target",
+      "occurred_at",
+      "correlation_occurred_id",
+      "error_code_occurred",
+      "outcome_occurred",
+      "severity_occurred",
+    ];
+    const names = suffixes.map((s) => auditIndexName(t, s));
+    for (const n of names) expect(n.length).toBeLessThanOrEqual(63);
+    expect(new Set(names).size).toBe(suffixes.length);
+    expect(auditIndexName(t, "event")).not.toBe(auditIndexName("a".repeat(58) + "b", "event"));
   });
 });

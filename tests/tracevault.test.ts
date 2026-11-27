@@ -193,7 +193,10 @@ describe("createTracevault", () => {
     expect(queryImpl).not.toHaveBeenCalled();
 
     await audit.flush();
-    expect(queryImpl).toHaveBeenCalledTimes(2);
+    // Both buffered events go out in a single multi-row INSERT.
+    expect(queryImpl).toHaveBeenCalledTimes(1);
+    const [, params] = queryImpl.mock.calls[0]!;
+    expect((params as unknown[][])[1]).toEqual(["a", "b"]);
 
     await audit.close();
   });

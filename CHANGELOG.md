@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Upgrading older schemas** — `bootstrap.ensureSchema` now adds the generated `outcome`, `error_code` and `severity` columns to tables created by `sql/001` only. Before, `startTracevault` failed with `column "error_code" does not exist`.
+- **Concurrent startup** — schema bootstrap runs under a PostgreSQL advisory lock, so several replicas starting at once no longer fail with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
+- **Long table names** — index names that would exceed 63 chars now use a shortened, hashed prefix. Before, PostgreSQL truncated them, they collided, and most indexes were silently skipped. Names that already fit are unchanged.
+
+### Changed
+
+- **Async mode writes batches with one multi-row `INSERT`** (up to `asyncBatchSize` rows). If a batch fails it is retried row by row, so `onError` still receives only the records that failed.
+- **`AuditDriverClient`** gains `insertMany(records)`.
+
+### Added
+
+- GitHub Actions CI: lint, typecheck, unit tests and smoke on Node 18/20/22, plus the Postgres integration suite.
+
 ## [1.0.1] - 2026-05-14
 
 ### Added

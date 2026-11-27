@@ -3,7 +3,7 @@ import { Client, Pool } from "pg";
 import { createTracevaultQuery } from "../query/query.js";
 import type { TracevaultQuery } from "../query/types.js";
 import type { AuditDiffEvent, AuditEvent, StartTracevaultOptions } from "../types/index.js";
-import { ensureAuditTableSchema } from "./audit-ddl.js";
+import { bootstrapAuditSchema } from "./audit-ddl.js";
 import { ConfigError } from "./errors.js";
 import { createTracevault } from "./tracevault.js";
 import {
@@ -56,13 +56,11 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
   const ensureSchema = options.bootstrap?.ensureSchema !== false;
 
   if (ensureSchema) {
-    const uniqueTables = [...new Set(Object.values(options.scopes).map((s) => s.tableName))];
+    const tables = Object.values(options.scopes).map((s) => s.tableName);
     if (options.pool) {
       const client = await options.pool.connect();
       try {
-        for (const tableName of uniqueTables) {
-          await ensureAuditTableSchema(client, tableName);
-        }
+        await bootstrapAuditSchema(client, tables);
       } finally {
         client.release();
       }
@@ -70,9 +68,7 @@ export async function startTracevault(options: StartTracevaultOptions): Promise<
       const client = new Client({ connectionString: options.connectionString });
       await client.connect();
       try {
-        for (const tableName of uniqueTables) {
-          await ensureAuditTableSchema(client, tableName);
-        }
+        await bootstrapAuditSchema(client, tables);
       } finally {
         await client.end();
       }
