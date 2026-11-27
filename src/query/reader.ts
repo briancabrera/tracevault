@@ -6,9 +6,11 @@ import {
   buildCountSql,
   buildFindByIdSql,
   buildFindManySql,
+  buildFindPageSql,
 } from "./builder.js";
-import type { AuditRecord } from "./types.js";
-import type { NormalizedQueryFilters } from "./validator.js";
+import { encodeCursor } from "./cursor.js";
+import type { AuditPage, AuditRecord } from "./types.js";
+import type { NormalizedPageFilters, NormalizedQueryFilters } from "./validator.js";
 
 interface RawRow {
   id: string;
@@ -59,6 +61,28 @@ export class PostgresReader {
         err,
       );
     }
+  }
+
+  async findPage<TData extends Record<string, unknown>, TMeta extends Record<string, unknown>>(
+    filters: NormalizedPageFilters,
+  ): Promise<AuditPage<TData, TMeta>> {
+    const { sql, params } = buildFindPageSql(this.tableName, filters);
+    let rows: Array<RawRow & { cursor_ts: string }>;
+    try {
+      rows = (await this.pool.query<RawRow & { cursor_ts: string }>(sql, params)).rows;
+    } catch (err) {
+      throw new DriverError(`Tracevault: failed to query "${this.tableName}".`, err);
+    }
+    const hasMore = rows.length > filters.limit;
+    const pageRows = hasMore ? rows.slice(0, filters.limit) : rows;
+    const last = pageRows[pageRows.length - 1];
+    return {
+      items: pageRows.map((row) => mapRow<TData, TMeta>(row)),
+      nextCursor:
+        hasMore && last
+          ? encodeCursor({ ts: last.cursor_ts, id: last.id, order: filters.order })
+          : null,
+    };
   }
 
   async findById<TData extends Record<string, unknown>, TMeta extends Record<string, unknown>>(

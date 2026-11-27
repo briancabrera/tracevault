@@ -1,4 +1,4 @@
-import type { NormalizedQueryFilters } from "./validator.js";
+import type { NormalizedPageFilters, NormalizedQueryFilters } from "./validator.js";
 import { SEVERITIES_FOR_ERRORS_ONLY_FILTER } from "./severity.js";
 
 export interface BuiltQuery {
@@ -34,6 +34,38 @@ export function buildFindManySql(
     `${whereClause} ` +
     `ORDER BY occurred_at ${dir}, id ${dir} ` +
     `LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+
+  return { sql, params };
+}
+
+/**
+ * Keyset version of `buildFindManySql`: rows strictly after `cursor` in
+ * `(occurred_at, id)` order. Fetches `limit + 1` rows so the caller can tell
+ * whether another page exists, and returns `occurred_at` as UTC text with
+ * microseconds and era (`cursor_ts`; `infinity` stays as-is) because a JS
+ * `Date` would round it to ms.
+ */
+export function buildFindPageSql(tableName: string, filters: NormalizedPageFilters): BuiltQuery {
+  const { whereClause, params } = buildWhere(filters);
+  const dir = filters.order === "asc" ? "ASC" : "DESC";
+  let where = whereClause;
+  if (filters.cursor) {
+    params.push(filters.cursor.ts, filters.cursor.id);
+    const cmp = filters.order === "asc" ? ">" : "<";
+    where +=
+      ` AND (occurred_at, id) ${cmp} ` +
+      `($${params.length - 1}::timestamp AT TIME ZONE 'UTC', $${params.length}::uuid)`;
+  }
+  params.push(filters.limit + 1);
+
+  const sql =
+    `SELECT ${SELECT_COLUMNS}, ` +
+    `COALESCE(to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US BC'), ` +
+    `occurred_at::text) AS cursor_ts ` +
+    `FROM "${tableName}" ` +
+    `${where} ` +
+    `ORDER BY occurred_at ${dir}, id ${dir} ` +
+    `LIMIT $${params.length}`;
 
   return { sql, params };
 }
