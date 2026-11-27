@@ -6,6 +6,7 @@ import {
   assertValidTableName,
   validateConfig,
   validateDiffEvent,
+  validateEmitOptions,
   validateEvent,
   validateScopeOverrides,
   validateStartTracevaultOptions,
@@ -452,5 +453,18 @@ describe("validateConfig / pool", () => {
         pool: {} as Pool,
       }),
     ).toThrow(/pool/);
+  });
+});
+
+describe("validateEmitOptions", () => {
+  const client = { query: async () => ({}) };
+  it("accepts no options and a client", () => {
+    expect(() => validateEmitOptions({}, undefined)).not.toThrow();
+    expect(() => validateEmitOptions({}, { client })).not.toThrow();
+  });
+  it("rejects unknown keys, bad clients and async mode with a client", () => {
+    expect(() => validateEmitOptions({}, { tx: client } as never)).toThrow(ValidationError);
+    expect(() => validateEmitOptions({}, { client: {} as never })).toThrow(ValidationError);
+    expect(() => validateEmitOptions({ mode: "async" }, { client })).toThrow(/async/);
   });
 });

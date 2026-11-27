@@ -7,6 +7,7 @@ import type {
   AuditDiffEvent,
   AuditEvent,
   AuditMode,
+  EmitOptions,
   PersistedRecord,
   Tracevault,
   TracevaultConfig,
@@ -17,6 +18,7 @@ import { AsyncQueue } from "./queue.js";
 import {
   validateConfig,
   validateDiffEvent,
+  validateEmitOptions,
   validateEvent,
   validatePersistedPayload,
   validateScopeOverrides,
@@ -185,7 +187,11 @@ function buildInstance(
     }
   }
 
-  async function persist(record: PersistedRecord): Promise<void> {
+  async function persist(record: PersistedRecord, options: EmitOptions | undefined): Promise<void> {
+    if (options?.client) {
+      await driver.insert({ ...record, mode: "sync" }, options.client);
+      return;
+    }
     if (record.mode === "async") {
       queue.enqueue(record);
       return;
@@ -216,20 +222,22 @@ function buildInstance(
   if (handle) runtime.scopes.add(handle);
 
   const instance: Tracevault = {
-    async emit(event: AuditEvent): Promise<void> {
+    async emit(event: AuditEvent, options?: EmitOptions): Promise<void> {
       assertOpen();
       validateEvent(event);
+      validateEmitOptions(event, options);
       const record = normalizeEvent(event, normalizeOpts);
       validatePersistedPayload(record);
-      await persist(record);
+      await persist(record, options);
     },
 
-    async emitDiff(event: AuditDiffEvent): Promise<void> {
+    async emitDiff(event: AuditDiffEvent, options?: EmitOptions): Promise<void> {
       assertOpen();
       validateDiffEvent(event);
+      validateEmitOptions(event, options);
       const record = normalizeDiffEvent(event, normalizeOpts);
       validatePersistedPayload(record);
-      await persist(record);
+      await persist(record, options);
     },
 
     async flush(): Promise<void> {

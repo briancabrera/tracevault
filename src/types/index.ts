@@ -81,6 +81,21 @@ export interface DiffEntry {
 
 export type Diff = Record<string, DiffEntry>;
 
+/** Anything with pg's `query(text, values)`: a `PoolClient`, a `Client`, or a `Pool`. */
+export interface AuditQueryable {
+  query(text: string, values?: unknown[]): Promise<unknown>;
+}
+
+/** Per-call options for `emit` / `emitDiff`. */
+export interface EmitOptions {
+  /**
+   * Write the event through this client, e.g. inside your own
+   * `BEGIN … COMMIT`, so it commits or rolls back with your business change.
+   * Always written synchronously; `mode: "async"` is rejected.
+   */
+  client?: AuditQueryable;
+}
+
 /**
  * Configuration for the internal write-side factory (used by `startTracevault`).
  */
@@ -164,8 +179,8 @@ export interface TracevaultScopeOverrides {
  * Internal write-side instance shape (composed by `startTracevault`).
  */
 export interface Tracevault {
-  emit(event: AuditEvent): Promise<void>;
-  emitDiff(event: AuditDiffEvent): Promise<void>;
+  emit(event: AuditEvent, options?: EmitOptions): Promise<void>;
+  emitDiff(event: AuditDiffEvent, options?: EmitOptions): Promise<void>;
   /** Waits for all queued async events to be processed. */
   flush(): Promise<void>;
   /**

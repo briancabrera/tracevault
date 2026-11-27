@@ -243,6 +243,31 @@ const audit = await startTracevault({
 
 Use **`readPool`** when the read side should hit a replica; **`readPool`** requires **`pool`**. With only **`pool`** (no **`readPool`**), **`readConnectionString`** must match **`connectionString`** or be omitted.
 
+## Emitting inside your transaction
+
+Pass your transaction's client so the audit event commits or rolls back
+together with the business change:
+
+```ts
+const client = await pool.connect();
+try {
+  await client.query("BEGIN");
+  await client.query("UPDATE products SET price = $1 WHERE id = $2", [price, id]);
+  await audit.emit({ event: "product.price.updated", target: { id, type: "product" } }, { client });
+  await client.query("COMMIT");
+} catch (err) {
+  await client.query("ROLLBACK");
+  throw err;
+} finally {
+  client.release();
+}
+```
+
+Events with a `client` are always written synchronously on that connection
+(`defaultMode: "async"` is ignored; `mode: "async"` throws `ValidationError`).
+The client's role needs `INSERT` on the audit table, and a failed audit insert
+aborts your transaction like any other failed statement.
+
 ## Sync vs async
 
 - `sync` — awaits the insert before `emit()` resolves. Easiest correctness story.

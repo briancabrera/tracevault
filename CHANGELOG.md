@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Transactional emits** — `emit(event, { client })` and `emitDiff(event, { client })` write through the given `pg` client, so the audit row commits or rolls back with your own transaction. These writes are always synchronous.
+
 ### Fixed
 
 - **Upgrading older schemas** — `bootstrap.ensureSchema` now adds the generated `outcome`, `error_code` and `severity` columns to tables created by `sql/001` only. Before, `startTracevault` failed with `column "error_code" does not exist`.
