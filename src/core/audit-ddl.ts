@@ -150,24 +150,26 @@ export async function ensureAuditTableSchema(
 }
 
 /**
- * Ensure every table's schema in one transaction holding a transaction-scoped
- * advisory lock. The lock is released on COMMIT/ROLLBACK or when the session
- * dies, and a transaction stays on one backend under PgBouncer transaction
- * pooling. `executor` must be a single dedicated connection (not a pool).
+ * Ensure every table's schema, one transaction per table, each holding a
+ * transaction-scoped advisory lock. Per-table commits keep DDL locks on one
+ * table from blocking writes to the others. The lock is released on
+ * COMMIT/ROLLBACK or when the session dies, and a transaction stays on one
+ * backend under PgBouncer transaction pooling. `executor` must be a single
+ * dedicated connection (not a pool).
  */
 export async function bootstrapAuditSchema(
   executor: SqlExecutor,
   tableNames: readonly string[],
 ): Promise<void> {
-  await executor.query("BEGIN");
-  try {
-    await executor.query("SELECT pg_advisory_xact_lock($1::bigint)", [SCHEMA_BOOTSTRAP_LOCK_KEY]);
-    for (const tableName of new Set(tableNames)) {
+  for (const tableName of new Set(tableNames)) {
+    await executor.query("BEGIN");
+    try {
+      await executor.query("SELECT pg_advisory_xact_lock($1::bigint)", [SCHEMA_BOOTSTRAP_LOCK_KEY]);
       await ensureAuditTableSchema(executor, tableName);
+      await executor.query("COMMIT");
+    } catch (err) {
+      await executor.query("ROLLBACK").catch(() => {});
+      throw err;
     }
-    await executor.query("COMMIT");
-  } catch (err) {
-    await executor.query("ROLLBACK").catch(() => {});
-    throw err;
   }
 }
