@@ -23,7 +23,11 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
 
   const t = typeof value;
 
-  if (t === "string" || t === "boolean") return;
+  if (t === "boolean") return;
+  if (t === "string") {
+    assertJsonbSafeString(value as string, path);
+    return;
+  }
 
   if (t === "number") {
     if (!Number.isFinite(value as number)) {
@@ -33,7 +37,9 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
   }
 
   if (t === "undefined") {
-    throw new ValidationError(`\`${path}\` contains \`undefined\`, which is not JSON-serializable.`);
+    throw new ValidationError(
+      `\`${path}\` contains \`undefined\`, which is not JSON-serializable.`,
+    );
   }
 
   if (t === "bigint") {
@@ -74,18 +80,33 @@ function walk(value: unknown, path: string, visited: WeakSet<object>): void {
     // they serialize to `{}` via JSON.stringify which is a silent data loss.
     const proto = Object.getPrototypeOf(obj);
     if (proto !== Object.prototype && proto !== null) {
-      throw new ValidationError(
-        `\`${path}\` must be a plain object; got ${describeType(obj)}.`,
-      );
+      throw new ValidationError(`\`${path}\` must be a plain object; got ${describeType(obj)}.`);
     }
 
     for (const key of Object.keys(obj as Record<string, unknown>)) {
+      assertJsonbSafeString(key, `${path} key ${JSON.stringify(key)}`);
       walk((obj as Record<string, unknown>)[key], `${path}.${key}`, visited);
     }
     return;
   }
 
   throw new ValidationError(`\`${path}\` has an unsupported type: ${t}.`);
+}
+
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+/** PostgreSQL `jsonb` rejects NUL (`\u0000`) and unpaired UTF-16 surrogates. */
+function assertJsonbSafeString(value: string, path: string): void {
+  if (value.includes("\u0000")) {
+    throw new ValidationError(
+      `\`${path}\` contains a NUL character (\\u0000), which PostgreSQL cannot store.`,
+    );
+  }
+  if (LONE_SURROGATE.test(value)) {
+    throw new ValidationError(
+      `\`${path}\` contains an unpaired UTF-16 surrogate, which PostgreSQL cannot store.`,
+    );
+  }
 }
 
 function describeType(obj: object): string {

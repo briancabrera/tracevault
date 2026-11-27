@@ -62,7 +62,9 @@ describe("assertJsonSerializable", () => {
   });
 
   it("rejects invalid Date", () => {
-    expect(() => assertJsonSerializable({ d: new Date("invalid") }, "data")).toThrow(/invalid Date/);
+    expect(() => assertJsonSerializable({ d: new Date("invalid") }, "data")).toThrow(
+      /invalid Date/,
+    );
   });
 
   it("points at the offending path in the error message", () => {
@@ -73,5 +75,13 @@ describe("assertJsonSerializable", () => {
       expect(err).toBeInstanceOf(ValidationError);
       expect((err as Error).message).toContain("data.a.b[0].c");
     }
+  });
+
+  it("rejects strings PostgreSQL jsonb cannot store", () => {
+    expect(() => assertJsonSerializable({ s: "a\u0000b" }, "data")).toThrow(/NUL/);
+    expect(() => assertJsonSerializable({ ["k\u0000"]: 1 }, "data")).toThrow(/NUL/);
+    expect(() => assertJsonSerializable({ s: "\ud800" }, "data")).toThrow(/surrogate/);
+    expect(() => assertJsonSerializable({ s: ["x\udc00"] }, "data")).toThrow(/surrogate/);
+    expect(() => assertJsonSerializable({ s: "emoji \ud83d\ude00 ok" }, "data")).not.toThrow();
   });
 });
