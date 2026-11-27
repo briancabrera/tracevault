@@ -3,6 +3,7 @@ import type {
   AuditDiffEvent,
   AuditEvent,
   AuditTarget,
+  EmitOptions,
   PersistedRecord,
   StartTracevaultOptions,
   TracevaultConfig,
@@ -520,6 +521,29 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
 export function validatePersistedPayload(record: PersistedRecord): void {
   if (record.data) assertJsonbSafe(record.data, "data");
   if (record.meta) assertJsonbSafe(record.meta, "meta");
+}
+
+export function validateEmitOptions(
+  event: { mode?: unknown },
+  options: EmitOptions | undefined,
+): void {
+  if (options === undefined) return;
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new ValidationError("emit options must be an object.");
+  }
+  for (const key of Object.keys(options)) {
+    if (key !== "client") throw new ValidationError(`Unknown emit option \`${key}\`.`);
+  }
+  if (options.client === undefined) return;
+  const client = options.client as { query?: unknown } | null;
+  if (!client || typeof client.query !== "function") {
+    throw new ValidationError("`client` must have a `query` method (pg PoolClient, Client or Pool).");
+  }
+  if (event.mode === "async") {
+    throw new ValidationError(
+      "`mode: \"async\"` cannot be combined with `client`: transactional emits are written synchronously.",
+    );
+  }
 }
 
 function assertValidQueueOptions(

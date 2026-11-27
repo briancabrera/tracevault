@@ -2,15 +2,17 @@ import { Client, Pool } from "pg";
 
 import { createTracevaultQuery } from "../query/query.js";
 import type { TracevaultQuery } from "../query/types.js";
-import type { AuditDiffEvent, AuditEvent, StartTracevaultOptions } from "../types/index.js";
+import type {
+  AuditDiffEvent,
+  AuditEvent,
+  EmitOptions,
+  StartTracevaultOptions,
+} from "../types/index.js";
 import { attachPoolErrorHandler } from "../drivers/postgres/pool-errors.js";
 import { bootstrapAuditSchema } from "./audit-ddl.js";
 import { ConfigError } from "./errors.js";
 import { createTracevault } from "./tracevault.js";
-import {
-  assertValidScopeName,
-  validateStartTracevaultOptions,
-} from "./validator.js";
+import { assertValidScopeName, validateStartTracevaultOptions } from "./validator.js";
 
 /** Read-only surface exposed on `TracevaultApp` and each scope handle. */
 export type TracevaultAppQuery = Pick<
@@ -19,15 +21,15 @@ export type TracevaultAppQuery = Pick<
 >;
 
 export interface TracevaultScopeHandle {
-  emit(event: AuditEvent): Promise<void>;
-  emitDiff(event: AuditDiffEvent): Promise<void>;
+  emit(event: AuditEvent, options?: EmitOptions): Promise<void>;
+  emitDiff(event: AuditDiffEvent, options?: EmitOptions): Promise<void>;
   flush(): Promise<void>;
   query: TracevaultAppQuery;
 }
 
 export interface TracevaultApp {
-  emit(event: AuditEvent): Promise<void>;
-  emitDiff(event: AuditDiffEvent): Promise<void>;
+  emit(event: AuditEvent, options?: EmitOptions): Promise<void>;
+  emitDiff(event: AuditDiffEvent, options?: EmitOptions): Promise<void>;
   flush(): Promise<void>;
   query: TracevaultAppQuery;
   getScope(name: string): TracevaultScopeHandle;

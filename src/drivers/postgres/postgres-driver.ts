@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 import { DriverError } from "../../core/errors.js";
-import type { PersistedRecord } from "../../types/index.js";
+import type { AuditQueryable, PersistedRecord } from "../../types/index.js";
 import type { AuditDriverClient } from "../driver.js";
 import { buildInsertManySql, buildInsertSql } from "./sql.js";
 
@@ -28,7 +28,8 @@ export class PostgresDriver implements AuditDriverClient {
     this.insertManySql = buildInsertManySql(opts.tableName);
   }
 
-  async insert(record: PersistedRecord): Promise<void> {
+  /** `client` runs the INSERT on the caller's connection (e.g. inside their transaction). */
+  async insert(record: PersistedRecord, client?: AuditQueryable): Promise<void> {
     if (this.closed) {
       throw new DriverError("Tracevault: driver is closed; cannot insert.");
     }
@@ -36,7 +37,7 @@ export class PostgresDriver implements AuditDriverClient {
     const params = recordToParams(record);
 
     try {
-      await this.pool.query(this.insertSql, params);
+      await (client ?? this.pool).query(this.insertSql, params);
     } catch (err) {
       throw new DriverError(
         `Tracevault: failed to insert audit event "${record.event}" (id=${record.id}).`,
