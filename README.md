@@ -89,6 +89,27 @@ adds optional STORED generated columns `outcome` and `error_code` (derived from
 > If you use a custom `tableName`, run **001** with the name substituted, then
 > adapt **002** and **003** (replace `"audit_logs"`) or use `generateInitSql("your_table")`.
 
+### Append-only tables (optional)
+
+`bootstrap: { immutable: true }` installs triggers on every scope table so
+`UPDATE`, `DELETE` and `TRUNCATE` fail with SQLSTATE `42501`; inserts and
+reads are unaffected. Without bootstrap, run **004**
+(`sql/004_audit_logs_immutable.sql`) or `generateInitSql("t", { immutable: true })`.
+
+This stops the application role (and mistakes) from rewriting history. The
+table owner or a superuser can still remove the triggers; for defence in
+depth, also give the write role only `INSERT` and `SELECT`. Setting
+`immutable` back to `false` does not remove the triggers. For retention
+jobs, the owner can delete old rows explicitly:
+
+```sql
+BEGIN;
+ALTER TABLE audit_logs DISABLE TRIGGER tracevault_append_only;
+DELETE FROM audit_logs WHERE occurred_at < now() - interval '400 days';
+ALTER TABLE audit_logs ENABLE TRIGGER tracevault_append_only;
+COMMIT;
+```
+
 ## Quick start
 
 ```ts
@@ -215,6 +236,7 @@ node -e 'console.log(require("tracevault").generateInitSql("audit_user_events"))
 | `defaultScope`           | `string`                    | —              | Must be a key of `scopes`. |
 | `scopes`                 | `Record<string, { tableName }>` | —        | Logical name → physical table. |
 | `bootstrap.ensureSchema` | `boolean`                   | `true`         | Set `false` if migrations own DDL. |
+| `bootstrap.immutable`    | `boolean`                   | `false`        | Append-only triggers on scope tables (see above). |
 | `maskFields`             | `string[]`                  | `[]`           | Same semantics as before. |
 | `maskValue`              | `string`                    | `"[REDACTED]"` | |
 | `defaultMode`            | `"sync" \| "async"`         | `"sync"`       | |

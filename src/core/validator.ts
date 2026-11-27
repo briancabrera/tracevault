@@ -402,6 +402,16 @@ export function validateStartTracevaultOptions(options: StartTracevaultOptions):
     );
   }
 
+  const bootstrap = options.bootstrap;
+  if (bootstrap?.immutable !== undefined && typeof bootstrap.immutable !== "boolean") {
+    throw new ConfigError("startTracevault: `bootstrap.immutable` must be a boolean.");
+  }
+  if (bootstrap?.immutable === true && bootstrap.ensureSchema === false) {
+    throw new ConfigError(
+      "startTracevault: `bootstrap.immutable` needs `ensureSchema`; apply sql/004 yourself instead.",
+    );
+  }
+
   if (options.readPool !== undefined && options.readPool !== null && !options.pool) {
     throw new ConfigError(
       "startTracevault: `readPool` requires `pool` — supply the write pool first.",

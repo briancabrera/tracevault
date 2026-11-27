@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Append-only audit tables (opt-in)** — `bootstrap: { immutable: true }`, `generateInitSql(table, { immutable: true })` or the new `sql/004_audit_logs_immutable.sql` install triggers that reject `UPDATE`, `DELETE` and `TRUNCATE` (SQLSTATE `42501`).
+
 ### Fixed
 
 - **Upgrading older schemas** — `bootstrap.ensureSchema` now adds the generated `outcome`, `error_code` and `severity` columns to tables created by `sql/001` only. Before, `startTracevault` failed with `column "error_code" does not exist`.
